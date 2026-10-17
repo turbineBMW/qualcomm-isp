@@ -41,7 +41,7 @@ Neither dependency replaces system libcamera or the system PipeWire plugin.
 ## Install extracted ICP firmware
 
 The intended Omarchy integration will use the firmware extractor already used
-by the Omarchy N1x team. Its exact interface and camera-data coverage still need
+by the Omarchy team. Its exact interface and camera-data coverage still need
 to be checked; these instructions specify the required output placement.
 
 For the currently qualified Surface Pro 11 Denali OLED profile, install the

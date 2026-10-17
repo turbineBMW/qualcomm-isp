@@ -1,7 +1,7 @@
 # Qualcomm ISP on Omarchy
 
 Experimental Qualcomm X1E front-camera ISP work integrated with the Omarchy ARM
-kernel, formerly packaged as `linux-omarchy-n1x`. This repository gives Omarchy
+kernel. This repository gives Omarchy
 and X1E developers the kernel patches, private libcamera changes and camera
 runtime used on a Surface Pro 11.
 
@@ -35,8 +35,7 @@ Developers can begin source review, platform inventory and staged bring-up now.
 | Board DT, IMX681 controls, firmware name, IOMMU/mapping expectations | Qualified on Denali OLED only |
 | Board profile, IFE tuning, AWB references and IPE program bank | Specific to the tested sensor/mode/firmware; not transferable by changing a model name |
 
-The ISP work targets Qualcomm X1E hardware. Integration uses the shared Omarchy
-ARM kernel; its former package name does not define the camera hardware scope.
+The ISP work targets Qualcomm X1E hardware and uses the shared Omarchy ARM kernel.
 
 ## Layout
 
