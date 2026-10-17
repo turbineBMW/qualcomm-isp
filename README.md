@@ -17,7 +17,8 @@ developers can begin source review, platform inventory and staged bring-up.
 ## Start here
 
 - [Testing another X1E machine](docs/TESTERS.md): export Windows drivers, stage
-  firmware, collect inventory and establish the sensor/RAW/IFE path before IPE.
+  firmware, inventory camera driver files and establish the sensor/RAW/IFE path
+  before IPE.
 - [Build and install](docs/INSTALL.md): private dependencies, firmware placement,
   local board-data import, activation and rollback.
 - [Firmware extractor integration](docs/FIRMWARE-EXTRACTOR.md): verified ICP

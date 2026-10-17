@@ -75,3 +75,21 @@ establish redistribution rights for the excluded camera data.
 
 Reproduction by another Surface owner remains required. No additional board,
 sensor or driver version is qualified by these results.
+
+## Driver inventory helper (2026-10-17)
+
+- Eleven synthetic checks cover UTF-16/UTF-8/Windows-1252 metadata, string tokens,
+  case-insensitive source-file references, source subdirectories, duplicate and
+  differing payloads, split firmware, unreadable INFs, symlink/FIFO exclusion,
+  unsafe references, malformed/oversized INFs, deterministic output and report
+  destination protection. Fixtures contain no vendor data.
+- A read-only scan of the locally extracted Microsoft Surface driver package
+  examined 1,126 regular files and 205 INFs. It identified 229 candidate files
+  across 24 camera-related INF candidates with no read/skip warnings. The three
+  known DLL, IMX681 tuning and ICP firmware hashes matched the qualified inputs.
+- The scan identified differing copies of `com.qti.tuned.default.bin` without
+  choosing one. The report contained no absolute input path or raw file contents;
+  the owner-package report remains local and is not committed.
+- These checks establish inventory behavior on synthetic fixtures and one real
+  package. Candidate matches can include unrelated support packages and do not
+  establish camera support or identify the active sensor on another machine.

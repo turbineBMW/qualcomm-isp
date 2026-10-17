@@ -67,19 +67,67 @@ and our [integration review](FIRMWARE-EXTRACTOR.md). The Surface installation
 path in that review is specific to the Surface profile; another board uses its
 own DT firmware paths.
 
-### 3. Report inventory and available inputs
+### 3. Inventory the exported camera drivers
+
+From this repository's root, using Python 3.10 or newer:
+
+```sh
+python -I tools/inventory-drivers.py /path/to/X1E-Drivers \
+  --output camera-drivers.json
+```
+
+This uses only Python's standard library. It works on an extracted driver export
+or unpacked OEM package; it does not unpack MSI/EXE archives itself. It reads
+regular files, never executes driver code, and needs no root or camera access.
+The output filename must be new and outside the scanned directory. Without
+`--output`, JSON goes to stdout and the short scan summary goes to stderr.
+
+The report includes:
+
+- Candidate firmware (including split images), DLLs, sensor modules, tuning and
+  package support files, with relative paths, sizes and SHA-256 hashes.
+- Camera-related INF metadata: provider, setup class, `DriverVer`, catalog names
+  and declared source files. UTF-16, UTF-8 and Windows-1252 INFs are supported.
+- Selection reasons: filename hints, Camera/Image setup class, camera-related
+  INF text, explicit source-file entries, or files beside a candidate INF.
+- Filename-derived sensor hints, and duplicate filenames grouped by hash so
+  identical copies can be distinguished from differing versions.
+- Read/skip warnings and source-file entries that were not found.
+
+The scanner does not include the input directory's absolute path, host identity
+or raw file contents. Review the JSON before posting: relative directory names
+and vendor metadata remain visible. Keep the original export local.
+
+Exit status `0` means the scan completed without read/skip warnings; `1` means a
+partial report was produced, with details in `warnings`; `2` means invalid usage
+or an input/output failure. Symlinks, junctions and special files are skipped.
+INF parsing is capped at 4 MiB per INF; payload hashing reads files in chunks.
+
+These are **candidates**, not confirmed hardware or compatibility findings.
+The metadata reader is not Windows SetupAPI and does not verify signatures,
+choose a driver version or perform installation. It examines all source-file
+section decorations, so an unmatched entry can belong to another architecture.
+An empty report does not establish that the machine has no camera components.
+Opaque OEM naming can require follow-up inspection; keep the full driver export.
+
+Metadata interpretation follows Microsoft's [INF Version section](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/inf-version-section)
+and [SourceDisksFiles section](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/inf-sourcedisksfiles-section)
+documentation. The helper's synthetic checks can be run with
+`python -I tools/test-inventory-drivers.py`; no driver files are required.
+
+### 4. Report inventory and available inputs
 
 Include these in a [new board report](https://github.com/turbineBMW/qualcomm-isp/issues):
 
 - Exact laptop model and `camera-platform.json` from the command above.
+- `camera-drivers.json` from the driver inventory helper, reviewed before sharing.
 - Whether Windows or an exported driver directory is available.
 - OEM driver package URL/version, if available.
 - Missing or ambiguous firmware names reported by the extractor.
 - Camera-related filenames, driver versions and SHA-256 hashes, when identified.
 
 Keep firmware, DLLs, tuning and the exported driver directory local; do not attach
-them to the public report. A driver-file inventory helper is planned but is not
-yet included in this repository.
+them to the public report.
 
 **The current `preparation/prepare.py` accepts only the tested Surface DLL and
 IMX681 tuning hashes.** Other machines first need their sensor, firmware and
