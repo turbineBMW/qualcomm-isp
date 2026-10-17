@@ -75,15 +75,16 @@ cover the publication recipes.
 
 The offline preparation workflow regenerated all 625 bank entries. Comparison
 with the accepted assets passed with the documented striping-pointer and
-inactive-CCM exceptions. The new assets have not been camera-tested; see the
-[preparation guide](docs/PREPARE-BOARD-DATA.md).
+inactive-CCM exceptions. After installing those assets, a 120-frame 4K PipeWire
+check passed. On 2026-10-17 the owner also confirmed Snapshot, Chromium and both
+idle and streaming suspend/resume passed with image quality and recovery
+unchanged; see the [preparation guide](docs/PREPARE-BOARD-DATA.md).
 
 ## Next integration work
 
-1. Install the locally regenerated assets and repeat camera/suspend acceptance.
-2. Reproduce and test the preparation workflow on another Surface.
-3. Collect inventory/RAW results from a second X1E model and add its profile.
-4. Reduce the kernel changes to the necessary generic and per-board series for
+1. Reproduce and test the preparation workflow on another Surface.
+2. Collect inventory/RAW results from a second X1E model and add its profile.
+3. Reduce the kernel changes to the necessary generic and per-board series for
    integration into the current Omarchy ARM kernel.
 
 Original standalone code is MIT. Kernel, libcamera and PipeWire retain their

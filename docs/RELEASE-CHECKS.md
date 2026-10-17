@@ -56,5 +56,22 @@ establish redistribution rights for the excluded camera data.
   source files and passes `makepkg --verifysource`. Runtime code is unchanged;
   no new binary package build or installation is claimed for this docs update.
 
-The regenerated data has not been installed or tested on camera hardware.
-Physical acceptance and reproduction by another Surface owner remain required.
+## Regenerated asset deployment and acceptance (2026-10-17)
+
+- Installed the clean-workspace outputs alongside the original assets, verified
+  all 12,504 output hashes and root ownership, then selected them in the runtime
+  configuration. The previous assets and configuration were preserved for rollback.
+- Installed preflight passed. A 120-frame native 4K RGBA PipeWire consumer
+  completed successfully using the regenerated bank. The session reported no
+  cleanup errors and restored sensor controls; ICP unloaded and runtime usage
+  returned to zero after streaming stopped.
+- The owner reported all requested physical checks passed: Snapshot, Chromium
+  getUserMedia, suspend/resume while idle and while streaming in Chromium, with
+  image quality and recovery unchanged. These are owner-reported acceptance
+  results, separate from the automated streaming check.
+- Kernel `7.2.8-13.1-omarchy-isp+`, private libcamera `0.7.2-2` and runtime
+  `0.1-3` remained installed throughout. This verifies regenerated assets with
+  the accepted binaries; it is not a new kernel/package build qualification.
+
+Reproduction by another Surface owner remains required. No additional board,
+sensor or driver version is qualified by these results.

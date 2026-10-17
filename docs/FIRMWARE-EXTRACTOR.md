@@ -93,7 +93,9 @@ selected functions from the owner's Windows camera DLL during preparation.
 The runtime does not call those functions while streaming.
 
 The generated bank has passed comparison with the accepted local assets, with
-the specific exceptions documented in the preparation guide. Deployment and
-physical camera acceptance of the regenerated data remain outstanding. Keep
-vendor files and generated assets outside the source repository. Other X1E
-sensors require separate tuning and qualification.
+the specific exceptions documented in the preparation guide. Deployment on the
+qualified Surface passed a 4K streaming check, and the owner confirmed Snapshot,
+Chromium and idle/streaming suspend/resume acceptance on 2026-10-17. Reproduction
+by another Surface owner remains outstanding. Keep vendor files and generated
+assets outside the source repository. Other X1E sensors require separate tuning
+and qualification.

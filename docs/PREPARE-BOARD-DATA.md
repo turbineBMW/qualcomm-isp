@@ -114,10 +114,15 @@ bank manifests. Its canonical comparison SHA-256 for the accepted grid is
 `8796ff9a8f07d115b8b6ed91e4227e7a6bd716f7a22ca4f275dcb640b2e09da9`.
 This is a comparison digest, not an archive checksum.
 
-The new assets have **not yet been installed or camera-tested**. Existing
-Snapshot, Chromium and suspend/resume acceptance applies to the earlier
-installed assets. A deployment of regenerated assets needs that acceptance
-repeated. Another Surface owner must still reproduce and test the workflow.
+The regenerated assets were installed on the qualified Surface on 2026-10-17.
+A 120-frame native 4K RGBA PipeWire consumer completed successfully; sensor
+controls were restored, ICP unloaded and runtime usage returned to zero. The
+session report confirmed use of the regenerated bank and no cleanup errors.
+The owner then confirmed Snapshot, Chromium getUserMedia, idle suspend/resume
+and streaming suspend/resume all passed, with image quality and recovery
+unchanged. Kernel and runtime binaries were unchanged during these tests.
+Another Surface owner must still reproduce and test the workflow; this result
+does not qualify other machines or driver versions.
 
 The white-balance reference gains remain provisional values from the qualified
 session, not per-device calibration. Lens shading and IFE CCM remain disabled.

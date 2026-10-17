@@ -9,7 +9,7 @@ depends=('python' 'python-numpy' 'python-gobject' 'gstreamer' 'gst-plugins-base'
 makedepends=('pkgconf' 'gcc' 'libpipewire')
 backup=('etc/qualcomm-isp/config.json')
 source=('qualcomm-isp-runtime.tar.gz')
-sha256sums=('001a1a704e3f02a075ce9579906340d05ef53dd216f7a756a04145fb407f885e')
+sha256sums=('479766616288c3842929a4089753a38b28257e1ee71bb17051c7fe0a1b03cecf')
 options=('!debug')
 build() {
   cd qualcomm-isp
