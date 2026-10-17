@@ -40,9 +40,10 @@ Neither dependency replaces system libcamera or the system PipeWire plugin.
 
 ## Install extracted ICP firmware
 
-The intended Omarchy integration will use the firmware extractor already used
-by the Omarchy team. Its exact interface and camera-data coverage still need
-to be checked; these instructions specify the required output placement.
+Omarchy's `qcom-firmware-extract` can supply the DT-named ICP image from a
+locally supplied Windows driver directory. Its camera copy path has passed
+focused integration checks. See [FIRMWARE-EXTRACTOR.md](FIRMWARE-EXTRACTOR.md)
+for the pinned source, commands, version selection and coverage.
 
 For the currently qualified Surface Pro 11 Denali OLED profile, install the
 extracted single-file firmware as:
@@ -79,8 +80,8 @@ placement does not require rebuilding the initramfs for the current setup.
 Other boards must use the firmware name requested by their own DT/profile.
 
 Firmware alone does not supply the IPE program bank, IFE tuning YAML or AWB
-references described below. Until the extractor's coverage is established,
-those remain separate locally supplied inputs. Firmware and extracted data
+references described below. The reviewed extractor does not generate these;
+they remain separate locally supplied inputs. Firmware and extracted data
 stay outside the GitHub source repository and runtime packages.
 
 ## Supply local board data

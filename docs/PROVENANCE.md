@@ -69,9 +69,10 @@ or lookup tables, firmware, Windows binaries, private capture data or raw logs.
 The importer copies explicitly supplied local inputs; it does not download
 those inputs or grant rights to distribute them.
 
-Omarchy's existing firmware extractor is the intended firmware delivery route.
-Its exact interface and coverage still need to be established. In particular,
-do not assume it also produces the qualified IPE bank, IFE YAML and AWB data.
+Omarchy's `qcom-firmware-extract` supplies DT-named firmware. Its camera copy
+path passed focused checks; it does not generate the IPE bank, IFE YAML or AWB
+data. See [FIRMWARE-EXTRACTOR.md](FIRMWARE-EXTRACTOR.md) for the reviewed source,
+coverage, checks and remaining preparation work.
 [INSTALL.md](INSTALL.md) documents the exact firmware destination and separates
 that requirement from the other camera assets.
 

@@ -20,6 +20,8 @@ Developers can begin source review, platform inventory and staged bring-up now.
   the sensor/RAW/IFE path before attempting IPE.
 - [Build and install](docs/INSTALL.md): private dependencies, firmware placement,
   local board-data import, activation and rollback.
+- [Firmware extractor integration](docs/FIRMWARE-EXTRACTOR.md): verified ICP
+  copy support and the remaining board-data preparation work.
 - [Source provenance and licenses](docs/PROVENANCE.md): origins, source hashes,
   retained attribution and excluded data.
 - [Kernel source manifest](packaging/kernel/ISP-SOURCES.json): pinned Omarchy
@@ -63,15 +65,17 @@ and runtime `0.1-3` passed:
 - 420-frame PipeWire streaming across sleep-hook stop/restore.
 
 Public recipes increment libcamera to `0.7.2-3` for the pinned source delivery
-and runtime to `0.1-4` for license notices. The tested runtime behavior and
+and runtime to `0.1-5` for license notices and extractor documentation. The tested runtime behavior and
 libcamera source contents are unchanged. Physical acceptance above applies to
 the installed revisions; build checks cover the publication recipes.
 
 ## Next integration work
 
-1. Confirm the Omarchy firmware extractor's interface and camera-data coverage.
-2. Establish a reproducible, distributable route to the remaining board inputs.
-3. Collect inventory/RAW results from a second X1E machine and add its profile.
+1. Publish a reviewed, portable preparation workflow for the IPE bank and tuning,
+   using locally supplied driver files. Firmware copying is covered by Omarchy's
+   existing extractor; see the integration guide above.
+2. Reproduce the qualified assets from a clean workspace and on another Surface.
+3. Collect inventory/RAW results from a second X1E model and add its profile.
 4. Reduce the kernel changes to the necessary generic and per-board series for
    integration into the current Omarchy ARM kernel.
 
