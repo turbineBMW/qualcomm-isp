@@ -11,10 +11,10 @@ The reviewed package recipe is `1-5`; the repository commit is
 | Runtime input | Extractor coverage | Remaining work |
 | --- | --- | --- |
 | `CAMERA_ICP.mbn` | Copies missing firmware requested by the running DT from an owner's driver store or installer stage | Supply the matching camera driver package; verify the tested hash |
-| `bank/bank.json` and IPE programs | Not generated or copied as a bank | Make the offline generation toolchain portable and review its dependencies |
-| `ife.yaml` | Not generated | Document and package the sensor-specific tuning conversion |
-| `awb-reference.json` | Not generated | Document and package reference extraction/generation |
-| `local-data-manifest.json` | Created by our local board-data importer | Import only after the three board-data inputs above are ready |
+| `bank/bank.json` and IPE programs | Not generated or copied as a bank | Generate with `preparation/prepare.py` from the supported local driver files |
+| `ife.yaml` | Not generated | Produced by the same preparation workflow |
+| `awb-reference.json` | Not generated | Produced by the same preparation workflow |
+| `local-data-manifest.json` | Created by preparation or the local board-data importer | Retain with the generated/imported assets |
 
 No extractor change is needed for the camera firmware's existing filename:
 our DT requests `qcom/x1e80100/microsoft/Denali/CAMERA_ICP.mbn`. The extractor
@@ -83,19 +83,17 @@ partition test. The upstream full test script did not complete in this local
 review environment: a disk-scanning fixture lacked its temporary `root/run`
 directory. No upstream full-suite pass is claimed.
 
-## Next: portable board-data preparation
+## Separate board-data preparation
 
-The current local bank builder prepares a grid of gain/tone programs through
-an offline helper that executes code from the owner's Windows camera DLL.
-It also consumes sensor tuning. AWB reference preparation parses tuning and
-uses the local Windows-derived helper. These are more than firmware file copies;
-the complete preparation dependency chain is not in this public repository.
-The runtime itself does not call those Windows components while streaming.
+[PREPARE-BOARD-DATA.md](PREPARE-BOARD-DATA.md) documents the supported Microsoft
+driver package and `preparation/prepare.py`. The tool checks both input hashes,
+builds the helper from source, generates the complete 625-entry bank, IFE YAML
+and AWB references, and records source/input/output hashes. The helper executes
+selected functions from the owner's Windows camera DLL during preparation.
+The runtime does not call those functions while streaming.
 
-The next implementation milestone is an explicit, versioned preparation
-interface that accepts locally supplied driver files, checks their identity,
-generates the required assets and records input/tool/output hashes. First audit
-the builder, its helpers and tuning parser for publication; then reproduce the
-qualified assets from a clean workspace before asking another Surface owner to
-run it. Keep vendor files and generated assets outside the source repository.
-Other X1E sensors will require separate tuning and qualification.
+The generated bank has passed comparison with the accepted local assets, with
+the specific exceptions documented in the preparation guide. Deployment and
+physical camera acceptance of the regenerated data remain outstanding. Keep
+vendor files and generated assets outside the source repository. Other X1E
+sensors require separate tuning and qualification.

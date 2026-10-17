@@ -9,10 +9,10 @@ runtime used on a Surface Pro 11.
 This is an initial developer source release. Other X1E machines need their own
 sensor, device-tree, firmware and tuning qualification.
 
-**Firmware and IPE program/tuning data are not included.** There is not yet a
-public extraction workflow for all of the qualified board data. Installing the
-ICP firmware alone is insufficient to reproduce the complete processed camera.
-Developers can begin source review, platform inventory and staged bring-up now.
+**Firmware and IPE program/tuning data are not included.** The preparation
+workflow generates Surface board data from two locally supplied, version-checked
+Windows driver files. Installing ICP firmware alone is insufficient. Other X1E
+developers can begin source review, platform inventory and staged bring-up.
 
 ## Start here
 
@@ -21,7 +21,9 @@ Developers can begin source review, platform inventory and staged bring-up now.
 - [Build and install](docs/INSTALL.md): private dependencies, firmware placement,
   local board-data import, activation and rollback.
 - [Firmware extractor integration](docs/FIRMWARE-EXTRACTOR.md): verified ICP
-  copy support and the remaining board-data preparation work.
+  copy support and the separate board-data preparation workflow.
+- [Prepare board data](docs/PREPARE-BOARD-DATA.md): supported Microsoft driver
+  package, offline generation and comparison with the accepted Surface assets.
 - [Source provenance and licenses](docs/PROVENANCE.md): origins, source hashes,
   retained attribution and excluded data.
 - [Kernel source manifest](packaging/kernel/ISP-SOURCES.json): pinned Omarchy
@@ -46,6 +48,7 @@ The ISP work targets Qualcomm X1E hardware and uses the shared Omarchy ARM kerne
 - `packaging/`: kernel, private libcamera and runtime Arch recipes.
 - `vendor/`: pinned source manifests, complete dependency diffs and MIT bridge.
 - `tools/`: inventory, build/export helpers and explicit local data import.
+- `preparation/`: source for offline, version-specific Surface asset generation.
 
 Dependencies install privately under `/usr/lib/qualcomm-isp`. Configuration is
 in `/etc/qualcomm-isp/config.json`; external board data belongs under
@@ -65,16 +68,20 @@ and runtime `0.1-3` passed:
 - 420-frame PipeWire streaming across sleep-hook stop/restore.
 
 Public recipes increment libcamera to `0.7.2-3` for the pinned source delivery
-and runtime to `0.1-5` for license notices and extractor documentation. The tested runtime behavior and
-libcamera source contents are unchanged. Physical acceptance above applies to
-the installed revisions; build checks cover the publication recipes.
+and runtime to `0.1-6` for license notices and preparation/extractor documentation.
+The tested runtime behavior and libcamera source contents are unchanged.
+Physical acceptance above applies to the installed revisions; build checks
+cover the publication recipes.
+
+The offline preparation workflow regenerated all 625 bank entries. Comparison
+with the accepted assets passed with the documented striping-pointer and
+inactive-CCM exceptions. The new assets have not been camera-tested; see the
+[preparation guide](docs/PREPARE-BOARD-DATA.md).
 
 ## Next integration work
 
-1. Publish a reviewed, portable preparation workflow for the IPE bank and tuning,
-   using locally supplied driver files. Firmware copying is covered by Omarchy's
-   existing extractor; see the integration guide above.
-2. Reproduce the qualified assets from a clean workspace and on another Surface.
+1. Install the locally regenerated assets and repeat camera/suspend acceptance.
+2. Reproduce and test the preparation workflow on another Surface.
 3. Collect inventory/RAW results from a second X1E model and add its profile.
 4. Reduce the kernel changes to the necessary generic and per-board series for
    integration into the current Omarchy ARM kernel.

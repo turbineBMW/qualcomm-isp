@@ -87,11 +87,12 @@ stay outside the GitHub source repository and runtime packages.
 ## Supply local board data
 
 Review `PROVENANCE.md`. Firmware and program/tuning data are deliberately absent
-from the packages. There is currently no documented public source for the exact
-qualified program bank, so an external tester cannot yet reproduce full IPE
-output from this source package alone.
+from the packages. [PREPARE-BOARD-DATA.md](PREPARE-BOARD-DATA.md) documents the
+supported Microsoft driver package and local generation of the complete Surface
+asset directory. Generated assets already have the layout described below.
+Generation and data comparison do not replace physical camera acceptance.
 
-For a developer who already has the qualified data, run the importer with
+Alternatively, if you already have the qualified data, run the importer with
 absolute paths to the bank directory, IFE tuning YAML and AWB reference JSON:
 
 ```sh

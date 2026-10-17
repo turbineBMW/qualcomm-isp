@@ -1,0 +1,26 @@
+{
+  "source": "Original local ISP development; no upstream VCS history",
+  "license": "MIT",
+  "original_sha256": {
+    "parity-colour.py": "ff4bc736a6295e5227c316d9b2ff2f988319226fe968e5eebc761a39388cb3df",
+    "tone-regions.py": "f7641e546a5f9fb0299bccef61a60a2fd1500201ec57d648117293dc5e113abd",
+    "nps-from-dll.py": "e322c9bbd9b688296b0133e72aa06eed42a0f353df09b872c987da0452552df5",
+    "dsx-from-dll.py": "d7095dfd21ec1357ca6780cb946e0783be8d84165ac152fed9196a8c7c194bae",
+    "asf-from-dll.py": "eb6fd172bfe35257baf1b806206a6497a2cd8a8820de86fabadc1279f0e48628",
+    "ltm-from-dll.py": "ca1f562dd42a5556e6d98c5bfe9f305ea3951d4dcaf8041c20e579848bcdf0a2",
+    "gamma-chain.py": "8b4b8eb1c7b8b36c2278336882705e65f3a11459ce13a741f8a661fd12b6282c",
+    "awb-reference.py": "e83eb838b8d98b97afc6377daf341b9f89a74e9e7b5be3d7dc6d5cbe8c72e040",
+    "ipeprog.py": "f0556d630b63e593740207233ff17a7f9e16b347adc8cae3c9bc2cac0e368337",
+    "slrun.c": "192921aaff564d05b277ff9f1a500505b0f9386b20e02f9525554a5cd7a879bd",
+    "chromatix.py": "9600e13a17b9cb0eee5f7132c5cd293c74d7ec31b7ff98ec860d46bf2f048395",
+    "parity-4k.py": "3f060e4933b240e38db551ece00282bd512ac17f2aeaaf1e912e4eefb65e79c9",
+    "prepare-ipe-bank.py": "d53e662e8013edeb71fd5f0ccbc5e2c72098745932fd7a57b2ee5f590f4ff3bc"
+  },
+  "changes": {
+    "build-entry.py": "Derived from parity-4k.py; explicit version-checked inputs, qualified 4K mode, local helpers and no capture probes.",
+    "prepare.py": "New portable orchestrator preserving the qualified prepare-ipe-bank.py grid and metadata.",
+    "inputs.py": "Reconstructs protocol descriptors and extracts reserves/coefficients directly from owner tuning; replaces saved lab blobs.",
+    "slrun.c": "Added exact DLL hash enforcement and explicit extracted DS4 coefficients; retains observed ABI offsets and original loader/call code.",
+    "other_helpers": "Portable imports/arguments and MIT SPDX notices; original calculation/packing logic retained."
+  }
+}

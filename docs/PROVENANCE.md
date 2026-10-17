@@ -12,7 +12,8 @@ opinion or a grant of rights to the external camera data.
 | libcamera | Public `turbineBMW/libcamera` commit `aeae1f0c7155ae2a175f27b571496f87943197f9`; GPL cam / LGPL core, other upstream files retain their licenses | Pinned source URL and complete local patch, including all six new files; hashes in `vendor/libcamera-source.json` |
 | PipeWire bridge | PipeWire 1.6.9, commit `8fa27cabdc6c0c1350c69c026af5850ef0af1e26`, MIT | Original notices, upstream blob IDs, complete local diff and source manifest |
 | Standalone runtime/tools | Brandon Williams's local ISP development and portable packaging work, MIT | File-level SPDX notices; original lab import hashes in `vendor/runtime-origin.json` |
-| IPE bank, IFE tuning and AWB reference data | Generated/extracted using the Surface Windows camera stack | Excluded; redistribution terms and a public extraction workflow remain unresolved |
+| Offline preparation tools | Brandon Williams's local ISP development and portable preparation work, MIT | Source-only loader, tuning parser and program packers; original hashes and changes in `vendor/preparation-source.json` |
+| IPE bank, IFE tuning and AWB reference data | Generated/extracted using the Surface Windows camera stack | Excluded; generated locally from owner-supplied files; no redistribution rights granted |
 | ICP firmware | Firmware requested by each board's device tree | Excluded; supplied separately by the machine owner |
 
 ## What was checked
@@ -61,6 +62,18 @@ shared-memory handoff, adaptive control, service lifecycle and publication.
 The original lab directory was not version-controlled; its import hashes are
 an origin record, not an upstream commit history.
 
+`preparation/slrun.c` is a local minimal ARM64 PE loader and call shim. It uses
+standard system headers, measured function offsets and ABI layouts to call
+selected functions in an owner-supplied DLL. The helper verifies the exact DLL
+SHA-256 before interpreting it. It contains no vendor implementation or binary
+payload. The adjacent Python sources parse tuning, select regions and construct
+protocol/register programs. Comments identifying CamX layouts, firmware DWARF
+and measured register behavior are retained; this work is not represented as
+clean-room development. Vendor tuning reserves, coefficients and lookup tables
+are read from the supplied tuning file or calculated by the DLL, not vendored
+as saved lab blobs. Original helper import hashes and the portable changes are
+recorded in `vendor/preparation-source.json`.
+
 ## External data remains separate
 
 Not calling Windows DLLs while streaming does not establish redistribution
@@ -72,7 +85,9 @@ those inputs or grant rights to distribute them.
 Omarchy's `qcom-firmware-extract` supplies DT-named firmware. Its camera copy
 path passed focused checks; it does not generate the IPE bank, IFE YAML or AWB
 data. See [FIRMWARE-EXTRACTOR.md](FIRMWARE-EXTRACTOR.md) for the reviewed source,
-coverage, checks and remaining preparation work.
+coverage and checks. [PREPARE-BOARD-DATA.md](PREPARE-BOARD-DATA.md) documents the
+separate source-only preparation workflow, exact supported inputs and its
+verification limits. It neither downloads nor redistributes those inputs.
 [INSTALL.md](INSTALL.md) documents the exact firmware destination and separates
 that requirement from the other camera assets.
 
