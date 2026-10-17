@@ -35,8 +35,8 @@ Developers can begin source review, platform inventory and staged bring-up now.
 | Board DT, IMX681 controls, firmware name, IOMMU/mapping expectations | Qualified on Denali OLED only |
 | Board profile, IFE tuning, AWB references and IPE program bank | Specific to the tested sensor/mode/firmware; not transferable by changing a model name |
 
-“N1x” here identifies the Omarchy kernel lineage. These Qualcomm ISP changes
-have not been tested on NVIDIA N1x hardware.
+The ISP work targets Qualcomm X1E hardware. Integration uses the shared Omarchy
+ARM kernel; its former package name does not define the camera hardware scope.
 
 ## Layout
 

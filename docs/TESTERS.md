@@ -42,4 +42,4 @@ suspend results. A compiled DTB or enumerated node is not a camera test.
 - Packaged revision 0.1-3: user confirmed Snapshot, Chromium getUserMedia and
   idle/active-camera actual system suspend. Logs confirm two clean deep-sleep
   cycles and first-frame recovery about five seconds after service restoration.
-- No second X1E machine or NVIDIA N1x hardware has been tested.
+- No second X1E machine has been tested.
