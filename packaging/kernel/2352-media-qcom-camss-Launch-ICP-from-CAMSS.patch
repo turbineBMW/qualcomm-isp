@@ -1,0 +1,71 @@
+From 6cb7336f7d189ec61885b9679496b574f4942e2a Mon Sep 17 00:00:00 2001
+From: Bryan O'Donoghue <bod@kernel.org>
+Date: Fri, 3 Jul 2026 12:12:41 +0100
+Subject: [PATCH 2352/2368] media: qcom: camss: Launch ICP from CAMSS
+
+Launch ICP from CAMSS.
+
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
+(cherry picked from commit fc694c60927eb08e270c1853c791ff452486c799)
+(cherry picked from commit 298319cfaef5221ed3744fc6e217a76d38bae208)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index bf727c976126e1d8886060089e33201ddf0f0509..500ffb858341cf5f2bc74230073f8b612f27b3ab 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -16,6 +16,7 @@
+ #include <linux/of.h>
+ #include <linux/of_device.h>
+ #include <linux/of_graph.h>
++#include <linux/of_platform.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_clock.h>
+@@ -5420,6 +5421,15 @@ static int camss_init_pm_clks(struct camss *camss)
+ 	return 0;
+ }
+ 
++/*
++ * Match table for child nodes that camss.c registers as platform devices.
++ * This includes existing nodes (csiphy, csid, vfe) plus the new ICP node.
++ */
++static const struct of_device_id camss_child_match[] = {
++	{ .compatible = "qcom,x1e80100-camss-icp" },	/* NEW: ICP node */
++	{ }
++};
++
+ /*
+  * camss_probe - Probe CAMSS platform device
+  * @pdev: Pointer to CAMSS platform device
+@@ -5515,6 +5525,22 @@ static int camss_probe(struct platform_device *pdev)
+ 	ret = camss_read_version(camss);
+ 	if (ret)
+ 		goto err_v4l2_device_unregister;
++	/*
++	 * Register child nodes as platform devices.
++	 *
++	 * This includes:
++	 * - Existing: csiphy, csid, vfe
++	 * - New: icp
++	 *
++	 * Note: IPE and BPS are NOT registered here. They are siblings
++	 * of ICP in the device tree, but are registered by the ICP
++	 * driver since ICP needs to probe first to provide HFI.
++	 */
++	ret = of_platform_populate(dev->of_node, camss_child_match, NULL, dev);
++	if (ret) {
++		dev_err(dev, "Failed to populate child devices: %d\n", ret);
++		goto err_of_platform_depopulate;
++	}
+ 
+ 	ret = camss_parse_ports(camss);
+ 	if (ret < 0)
+@@ -5545,6 +5571,8 @@ static int camss_probe(struct platform_device *pdev)
+ 	v4l2_device_unregister(&camss->v4l2_dev);
+ 	v4l2_async_nf_cleanup(&camss->notifier);
+ 	pm_runtime_disable(dev);
++err_of_platform_depopulate:
++	of_platform_depopulate(&pdev->dev);
+ err_media_device_cleanup:
+ 	media_device_cleanup(&camss->media_dev);
+ err_genpd_cleanup:

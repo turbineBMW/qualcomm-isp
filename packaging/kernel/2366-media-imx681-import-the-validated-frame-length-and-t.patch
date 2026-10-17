@@ -1,0 +1,62 @@
+From 798d370f9d74b6b08a16652ccac31f4179b02532 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Sat, 17 Oct 2026 15:42:54 -0400
+Subject: [PATCH 2366/2368] media: imx681: import the validated frame-length
+ and timing correction
+
+Snapshot of the working SP11 source on 2026-10-17: 24-bit frame length at 0x033d, 3554 default lines, 720 MHz timing clock, and bounded VBLANK. Source provenance is recorded in evidence/source-baseline/manifest.json.
+
+diff --git a/drivers/media/i2c/imx681-tables.h b/drivers/media/i2c/imx681-tables.h
+index 3b492c21da7b610af2dba17a2f4630aa1c9af3bc..d911e90588a24723d5dfa5e07d5e4059b66e1811 100644
+--- a/drivers/media/i2c/imx681-tables.h
++++ b/drivers/media/i2c/imx681-tables.h
+@@ -5,8 +5,9 @@
+  * These tables are an independently written representation of runtime I2C
+  * transactions observed on the author's own hardware.  The observed
+  * stream-start order is global initialization, followed by the selected mode.
+- * Mode: 3840x2640 RAW10, LLP 6752, VT pixel clock 548571428 Hz
+- * (~30 fps at FLL 2708), ONE C-PHY TRIO at 2406 Msym/s.
++ * Mode: 3840x2640 RAW10, LLP 6752, timing pixel clock 720000000 Hz
++ * (~30 fps at FLL 3554), ONE C-PHY TRIO at 2406 Msym/s. The timing clock
++ * is verified from frame timestamps while varying the 24-bit FLL at 0x033d.
+  */
+ #ifndef __IMX681_TABLES_H
+ #define __IMX681_TABLES_H
+diff --git a/drivers/media/i2c/imx681.c b/drivers/media/i2c/imx681.c
+index 938b0b0ef1afd92a20a60d5f6f91f4766554dcc3..b767cc0db301d852da06312a0a2cce70b2487f82 100644
+--- a/drivers/media/i2c/imx681.c
++++ b/drivers/media/i2c/imx681.c
+@@ -33,12 +33,12 @@
+ #define IMX681_REG_EXPOSURE	CCI_REG24(0x0229)
+ #define IMX681_REG_ANALOG_GAIN	CCI_REG16(0x0204)
+ #define IMX681_REG_DIGITAL_GAIN	CCI_REG16(0x020e)
+-#define IMX681_REG_FRAME_LENGTH	CCI_REG16(0x0340)
++#define IMX681_REG_FRAME_LENGTH	CCI_REG24(0x033d)
+ 
+ #define IMX681_WIDTH		3840
+ #define IMX681_HEIGHT		2640
+ #define IMX681_LINE_LENGTH	6752
+-#define IMX681_FRAME_LENGTH_DEF	2708
++#define IMX681_FRAME_LENGTH_DEF	3554
+ #define IMX681_FRAME_LENGTH_MAX	0xffff
+ #define IMX681_EXPOSURE_MARGIN	48
+ /*
+@@ -53,7 +53,8 @@
+ #define IMX681_AGAIN_DEF	768	/* 1024 / (1024 - 768) = 4x */
+ #define IMX681_AGAIN_MAX	960	/* gain = 1024 / (1024 - code) */
+ #define IMX681_DGAIN_DEF	0x0100
+-#define IMX681_PIXEL_RATE	548571428
++/* 6752 clocks/line at 720 MHz: 9.3778 us/line, 30 fps at 3554 lines. */
++#define IMX681_PIXEL_RATE	720000000
+ /* V4L2 C-PHY link frequency is half the 2406-Msym/s symbol rate. */
+ #define IMX681_LINK_FREQ	1203000000
+ #define IMX681_MBUS_CODE	MEDIA_BUS_FMT_SRGGB10_1X10
+@@ -244,7 +245,7 @@ static int imx681_init_controls(struct imx681 *sensor)
+ 
+ 	sensor->vblank_ctrl =
+ 		v4l2_ctrl_new_std(hdl, ops, V4L2_CID_VBLANK,
+-				  IMX681_EXPOSURE_MARGIN,
++				  IMX681_FRAME_LENGTH_DEF - IMX681_HEIGHT,
+ 				  IMX681_FRAME_LENGTH_MAX - IMX681_HEIGHT, 1,
+ 				  IMX681_FRAME_LENGTH_DEF - IMX681_HEIGHT);
+ 	sensor->expo_ctrl =

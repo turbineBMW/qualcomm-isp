@@ -1,0 +1,48 @@
+From d4687c6d85147467e6f452d084262cbb09a0ef83 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Wed, 14 Oct 2026 08:37:44 -0400
+Subject: [PATCH 2340/2368] media: i2c: imx681: start with a full frame of
+ exposure and 4x gain
+
+The controls reset to 1x analogue gain and a 1600-line exposure. The
+software ISP's auto gain steps multiplicatively from whatever the
+controls hold, exposure first and gain second, so after a cold boot in
+a normally lit room the first stream spent 10 to 15 seconds climbing to
+the 16x gain the room needed; later opens were fine because the controls
+keep their last values. Start where an indoor camera ends up: the full
+frame of exposure (2660 lines at the default frame length) and 4x gain,
+two doublings from either a dim room or a bright one.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 9f23a0a2c61455009c6605e4bdad6c835d949e5f)
+
+diff --git a/drivers/media/i2c/imx681.c b/drivers/media/i2c/imx681.c
+index 9dc110d04a9d6759c2a8c97b7a742f849e385988..d5046ec18180e70cc6b10a39eb0a41f08a9ce534 100644
+--- a/drivers/media/i2c/imx681.c
++++ b/drivers/media/i2c/imx681.c
+@@ -41,13 +41,15 @@
+ #define IMX681_FRAME_LENGTH_DEF	2708
+ #define IMX681_FRAME_LENGTH_MAX	0xffff
+ #define IMX681_EXPOSURE_MARGIN	48
+-#define IMX681_EXPOSURE_DEF	1600
++/* Start at a full frame of exposure and 4x analogue gain. */
++#define IMX681_EXPOSURE_DEF	(IMX681_FRAME_LENGTH_DEF - IMX681_EXPOSURE_MARGIN)
+ /*
+  * The analogue gain register holds a code with gain = 1024 / (1024 - code).
+  * V4L2_CID_ANALOGUE_GAIN is linear in 1/256 steps (256 = 1x, 4096 = 16x) so
+  * that userspace without a sensor-specific gain model computes it correctly.
+  */
+ #define IMX681_AGAIN_ONE	256
++#define IMX681_AGAIN_DEF	(4 * IMX681_AGAIN_ONE)
+ #define IMX681_AGAIN_MAX	(16 * IMX681_AGAIN_ONE)
+ #define IMX681_DGAIN_DEF	0x0100
+ #define IMX681_PIXEL_RATE	548571428
+@@ -253,7 +255,7 @@ static int imx681_init_controls(struct imx681 *sensor)
+ 	sensor->again_ctrl =
+ 		v4l2_ctrl_new_std(hdl, ops, V4L2_CID_ANALOGUE_GAIN,
+ 				  IMX681_AGAIN_ONE, IMX681_AGAIN_MAX, 1,
+-				  IMX681_AGAIN_ONE);
++				  IMX681_AGAIN_DEF);
+ 	sensor->dgain_ctrl =
+ 		v4l2_ctrl_new_std(hdl, ops, V4L2_CID_DIGITAL_GAIN, 0x0100,
+ 				  0x0fff, 1, IMX681_DGAIN_DEF);

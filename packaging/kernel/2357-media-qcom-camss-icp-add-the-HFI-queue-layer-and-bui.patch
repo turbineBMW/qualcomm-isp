@@ -1,0 +1,581 @@
+From 3dcf60c1a69644a714e84779817fcce062d9724b Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Thu, 15 Oct 2026 09:13:19 -0400
+Subject: [PATCH 2357/2368] media: qcom: camss: icp: add the HFI queue layer
+ and build the ICP alone
+
+The ICP RFC calls an HFI layer (camss-icp-hfi.c) that it does not carry,
+and its Makefile names a BPS command builder that is missing too, so the
+series does not build. Add the HFI part the ICP needs to come up:
+memory (shared, QDSS, firmware-uncached carved into secondary heap,
+queue table, command/message/debug rings and the failure-reason buffer),
+the queue table in interrupt mode as the firmware expects it, command
+writes with the doorbell, message and debug queue readers, and the
+system bring-up: SYS_INIT, the debug level, a ping.
+
+Build only the ICP module for now; BPS and IPE need the pieces that are
+still missing. Accept a firmware-name with an extension so a single-file
+signed .mbn loads as is, and clean up the warnings in camss-icp.c.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+Assisted-by: Claude:claude-opus-5-5
+(cherry picked from commit f73ae51e87d37ac9de5ee8018f7a7573fd40662b)
+
+diff --git a/drivers/media/platform/qcom/camss/Makefile b/drivers/media/platform/qcom/camss/Makefile
+index ae5fe78b4da41d688fb4cec313646e93f1d3e1fc..86518a8365a3d52450b2ce0e4d259915b467282a 100644
+--- a/drivers/media/platform/qcom/camss/Makefile
++++ b/drivers/media/platform/qcom/camss/Makefile
+@@ -35,7 +35,3 @@ obj-$(CONFIG_VIDEO_QCOM_CAMSS) += qcom-camss.o
+ qcom-camss-icp-objs += camss-icp.o \
+ 		       camss-icp-hfi.o
+ obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-icp.o
+-
+-qcom-camss-bps-objs += camss-bps.o \
+-		       camss-bps-cmd.o
+-obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-bps.o
+diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..ebb629edf8a798a4be33dddc3b8d3955125b4d0b
+--- /dev/null
++++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
+@@ -0,0 +1,429 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Qualcomm CAMSS ICP Host Firmware Interface: memory, queues and the
++ * system commands (init, ping, debug configuration).
++ *
++ * The queue table, queue header layout and the interrupt-mode queue setup
++ * follow the HFI the ICP firmware implements (as in Qualcomm's camera
++ * kernel driver, cam_icp/hfi.c): three ring buffers of 32-bit words, the
++ * host writes the command queue and reads the message and debug queues.
++ */
++#include <linux/delay.h>
++#include <linux/dma-mapping.h>
++#include <linux/io.h>
++#include <linux/sizes.h>
++#include <linux/slab.h>
++#include <linux/string.h>
++
++#include "camss-icp.h"
++#include "camss-icp-hfi.h"
++
++#define HFI_QHDR_ACTIVE			1
++#define HFI_QHDR_SET			1
++#define HFI_QHDR_SET_WM			1024
++#define HFI_VAR_SIZE_PKT		0
++#define HFI_NUM_ACTIVE_QUEUES		3
++#define HFI_NUM_QUEUES			4
++
++#define HFI_CMD_Q_BYTES			8192
++#define HFI_MSG_Q_BYTES			8192
++#define HFI_DBG_Q_BYTES			102400
++
++#define HFI_CMD_TIMEOUT_MS		5000
++#define HFI_PING_COOKIE			0xdeadbeefcafebabeULL
++
++/* largest message we copy out of a queue */
++#define HFI_MSG_MAX_BYTES		SZ_4K
++
++static u32 hfi_q_bytes[HFI_Q_MAX] = {
++	[HFI_Q_CMD_TYPE] = HFI_CMD_Q_BYTES,
++	[HFI_Q_MSG_TYPE] = HFI_MSG_Q_BYTES,
++	[HFI_Q_DBG_TYPE] = HFI_DBG_Q_BYTES,
++};
++
++static int hfi_alloc(struct icp_hfi *hfi, struct icp_hfi_mem_region *r, size_t size)
++{
++	r->vaddr = dma_alloc_coherent(hfi->dev, size, &r->dma_addr, GFP_KERNEL);
++	if (!r->vaddr)
++		return -ENOMEM;
++	r->size = size;
++	memset(r->vaddr, 0, size);
++	return 0;
++}
++
++static void hfi_free(struct icp_hfi *hfi, struct icp_hfi_mem_region *r)
++{
++	if (r->vaddr)
++		dma_free_coherent(hfi->dev, r->size, r->vaddr, r->dma_addr);
++	r->vaddr = NULL;
++}
++
++static void hfi_carve(struct icp_hfi_mem_region *parent, size_t *off,
++		      struct icp_hfi_mem_region *r, size_t size)
++{
++	r->vaddr = parent->vaddr + *off;
++	r->dma_addr = parent->dma_addr + *off;
++	r->size = size;
++	*off += size;
++}
++
++int icp_hfi_init_queues(struct icp_hfi *hfi)
++{
++	const struct hfi_resources *res = hfi->res;
++	struct icp_hfi_mem *m = &hfi->hfi_mem;
++	struct hfi_q_tbl_hdr *tbl;
++	struct hfi_sfr *sfr;
++	size_t off = 0;
++	int i, ret;
++
++	/* the firmware takes 32-bit addresses */
++	ret = dma_set_mask_and_coherent(hfi->dev, DMA_BIT_MASK(32));
++	if (ret)
++		return ret;
++
++	mutex_init(&hfi->cmd_lock);
++	mutex_init(&hfi->msg_lock);
++	init_completion(&hfi->cmd_complete);
++
++	ret = hfi_alloc(hfi, &m->shmem, res->shmem_size);
++	if (ret)
++		goto err;
++	ret = hfi_alloc(hfi, &m->qdss, res->qdss_size);
++	if (ret)
++		goto err;
++	ret = hfi_alloc(hfi, &m->fwuncached, res->fwuncached_size);
++	if (ret)
++		goto err;
++
++	hfi_carve(&m->fwuncached, &off, &m->secheap, res->secheap_size);
++	hfi_carve(&m->fwuncached, &off, &m->q_tbl, res->q_tbl_size);
++	for (i = 0; i < HFI_Q_MAX; i++)
++		hfi_carve(&m->fwuncached, &off, &m->q_data[i], res->qdata_size[i]);
++	hfi_carve(&m->fwuncached, &off, &m->sfr, res->sfr_size);
++	if (off > m->fwuncached.size) {
++		ret = -EINVAL;
++		goto err;
++	}
++
++	tbl = m->q_tbl.vaddr;
++	tbl->version = HFI_QUEUE_TABLE_VERSION;
++	tbl->size = sizeof(*tbl) + HFI_NUM_QUEUES * sizeof(struct hfi_q_hdr);
++	tbl->q_hdr0_offset = sizeof(*tbl);
++	tbl->q_hdr_size = sizeof(struct hfi_q_hdr);
++	tbl->num_queues = HFI_NUM_ACTIVE_QUEUES;
++	tbl->num_active_queues = HFI_NUM_ACTIVE_QUEUES;
++
++	for (i = 0; i < HFI_Q_MAX; i++) {
++		struct hfi_q_hdr *q = &tbl->q_hdr[i];
++
++		q->status = HFI_QHDR_ACTIVE;
++		q->start_addr = m->q_data[i].dma_addr;
++		q->type = i;
++		q->q_size = hfi_q_bytes[i] >> HFI_BYTE_WORD_SHIFT;
++		q->pkt_size = HFI_VAR_SIZE_PKT;
++		q->pkt_drop_cnt = 0;
++		q->read_idx = 0;
++		q->write_idx = 0;
++		/* interrupt mode, as the reference driver runs it */
++		q->rx_wm = HFI_QHDR_SET;
++		q->tx_wm = i == HFI_Q_DBG_TYPE ? HFI_QHDR_SET_WM : HFI_QHDR_SET;
++		q->rx_req = i == HFI_Q_DBG_TYPE ? 0 : HFI_QHDR_SET;
++		q->tx_req = 0;
++		q->rx_irq_status = 0;
++		q->tx_irq_status = 0;
++	}
++	hfi->q_tbl = tbl;
++
++	sfr = m->sfr.vaddr;
++	sfr->size = HFI_SFR_LOG_SIZE;
++	hfi->sfr = sfr;
++
++	/* tables in place before the firmware is told where they are */
++	wmb();
++
++	dev_info(hfi->dev, "HFI: qtbl %pad shmem %pad fwuncached %pad sfr %pad\n",
++		 &m->q_tbl.dma_addr, &m->shmem.dma_addr,
++		 &m->fwuncached.dma_addr, &m->sfr.dma_addr);
++	return 0;
++
++err:
++	icp_hfi_deinit_queues(hfi);
++	return ret;
++}
++
++void icp_hfi_deinit_queues(struct icp_hfi *hfi)
++{
++	struct icp_hfi_mem *m = &hfi->hfi_mem;
++
++	hfi->ready = false;
++	hfi->q_tbl = NULL;
++	hfi->sfr = NULL;
++	hfi_free(hfi, &m->fwuncached);
++	hfi_free(hfi, &m->qdss);
++	hfi_free(hfi, &m->shmem);
++}
++
++static int hfi_write_cmd(struct icp_hfi *hfi, const void *pkt)
++{
++	struct hfi_q_hdr *q = &hfi->q_tbl->q_hdr[HFI_Q_CMD_TYPE];
++	u32 *ring = hfi->hfi_mem.q_data[HFI_Q_CMD_TYPE].vaddr;
++	u32 words = hfi_pkt_size((void *)pkt) >> HFI_BYTE_WORD_SHIFT;
++	u32 ri = READ_ONCE(q->read_idx), wi = READ_ONCE(q->write_idx);
++	u32 qsize = q->q_size, space, new_wi, first;
++
++	if (!words)
++		return -EINVAL;
++
++	space = wi >= ri ? qsize - (wi - ri) : ri - wi;
++	if (space <= words)
++		return -ENOSPC;
++
++	new_wi = wi + words;
++	if (new_wi < qsize) {
++		memcpy(ring + wi, pkt, words << HFI_BYTE_WORD_SHIFT);
++	} else {
++		new_wi -= qsize;
++		first = words - new_wi;
++		memcpy(ring + wi, pkt, first << HFI_BYTE_WORD_SHIFT);
++		memcpy(ring, (const u32 *)pkt + first, new_wi << HFI_BYTE_WORD_SHIFT);
++	}
++
++	/* packet before index, index before the doorbell */
++	wmb();
++	WRITE_ONCE(q->write_idx, new_wi);
++	wmb();
++	hfi->ops->raise_irq(hfi->priv);
++	return 0;
++}
++
++/* Copy one packet out of a firmware-to-host queue; returns its size in bytes. */
++static int hfi_read_pkt(struct icp_hfi *hfi, int qid, u32 *buf, u32 buf_bytes)
++{
++	struct hfi_q_hdr *q = &hfi->q_tbl->q_hdr[qid];
++	u32 *ring = hfi->hfi_mem.q_data[qid].vaddr;
++	u32 ri = READ_ONCE(q->read_idx), wi = READ_ONCE(q->write_idx);
++	u32 qsize = q->q_size, words, avail, first;
++
++	if (ri == wi)
++		return 0;
++
++	rmb();
++	avail = wi > ri ? wi - ri : qsize - ri + wi;
++	words = ring[ri] >> HFI_BYTE_WORD_SHIFT;	/* first word = size */
++	if (!words || words > avail || (words << HFI_BYTE_WORD_SHIFT) > buf_bytes) {
++		dev_err(hfi->dev, "HFI q%d: bad packet (%u words, %u queued), dropping queue\n",
++			qid, words, avail);
++		WRITE_ONCE(q->read_idx, wi);
++		return -EIO;
++	}
++
++	if (ri + words <= qsize) {
++		memcpy(buf, ring + ri, words << HFI_BYTE_WORD_SHIFT);
++	} else {
++		first = qsize - ri;
++		memcpy(buf, ring + ri, first << HFI_BYTE_WORD_SHIFT);
++		memcpy(buf + first, ring, (words - first) << HFI_BYTE_WORD_SHIFT);
++	}
++
++	mb();
++	WRITE_ONCE(q->read_idx, (ri + words) % qsize);
++	return words << HFI_BYTE_WORD_SHIFT;
++}
++
++void icp_hfi_flush_debug_queue(struct icp_hfi *hfi)
++{
++	u32 *buf;
++	int len;
++
++	if (!hfi->q_tbl)
++		return;
++
++	buf = kmalloc(HFI_MSG_MAX_BYTES, GFP_KERNEL);
++	if (!buf)
++		return;
++
++	mutex_lock(&hfi->msg_lock);
++	while ((len = hfi_read_pkt(hfi, HFI_Q_DBG_TYPE, buf, HFI_MSG_MAX_BYTES)) > 0) {
++		struct hfi_msg_debug *dbg = (void *)buf;
++
++		if (hfi_pkt_type(buf) == HFI_MSG_SYS_DEBUG &&
++		    len > sizeof(*dbg)) {
++			int n = min_t(u32, dbg->msg_size, len - sizeof(*dbg));
++
++			dev_info(hfi->dev, "fw: %.*s\n", n, dbg->msg_data);
++		} else {
++			dev_dbg(hfi->dev, "fw debug packet type 0x%x size %d\n",
++				hfi_pkt_type(buf), len);
++		}
++	}
++	mutex_unlock(&hfi->msg_lock);
++	kfree(buf);
++}
++
++bool icp_hfi_process_msg_queue(struct icp_hfi *hfi)
++{
++	bool any = false;
++	u32 *buf;
++	int len;
++
++	if (!hfi->q_tbl)
++		return false;
++
++	buf = kmalloc(HFI_MSG_MAX_BYTES, GFP_KERNEL);
++	if (!buf)
++		return false;
++
++	mutex_lock(&hfi->msg_lock);
++	while ((len = hfi_read_pkt(hfi, HFI_Q_MSG_TYPE, buf, HFI_MSG_MAX_BYTES)) > 0) {
++		u32 type = hfi_pkt_type(buf);
++
++		any = true;
++		switch (type) {
++		case HFI_MSG_SYS_INIT_DONE: {
++			struct hfi_msg_init_done *m = (void *)buf;
++			u32 n = min_t(u32, m->prop_num, HFI_MAX_PROPS);
++
++			hfi->api_version = m->error;
++			hfi->prop_num = n;
++			memcpy(hfi->properties, m->prop_data, n * sizeof(u32));
++			dev_info(hfi->dev, "HFI: SYS_INIT_DONE error %u props %u\n",
++				 m->error, m->prop_num);
++			break;
++		}
++		case HFI_MSG_SYS_PING_ACK: {
++			struct hfi_msg_ping_ack *m = (void *)buf;
++
++			dev_info(hfi->dev, "HFI: ping ack 0x%016llx%s\n", m->user_data,
++				 m->user_data == HFI_PING_COOKIE ? " (match)" : " (MISMATCH)");
++			break;
++		}
++		case HFI_MSG_EVENT_NOTIFY: {
++			struct hfi_msg_event *m = (void *)buf;
++
++			dev_err(hfi->dev, "HFI: event %u session 0x%x data 0x%x 0x%x\n",
++				m->event_id, m->session_id, m->data1, m->data2);
++			icp_hfi_dump_sfr(hfi);
++			break;
++		}
++		default:
++			dev_info(hfi->dev, "HFI: message 0x%x size %d\n", type, len);
++			break;
++		}
++
++		WRITE_ONCE(hfi->last_msg_type, type);
++		memcpy(hfi->last_msg, buf, min_t(int, len, sizeof(hfi->last_msg)));
++		complete(&hfi->cmd_complete);
++	}
++	mutex_unlock(&hfi->msg_lock);
++	kfree(buf);
++	return any;
++}
++
++/*
++ * Send a command and wait for the message of the expected type. The ICP's
++ * interrupt reaches us through the threaded handler; poll the queue as
++ * well so a missing interrupt shows up as a log line, not a hang.
++ */
++static int hfi_cmd_wait(struct icp_hfi *hfi, const void *pkt, u32 want)
++{
++	unsigned long deadline = jiffies + msecs_to_jiffies(HFI_CMD_TIMEOUT_MS);
++	bool irq_seen = false;
++	int ret;
++
++	mutex_lock(&hfi->cmd_lock);
++	reinit_completion(&hfi->cmd_complete);
++	WRITE_ONCE(hfi->last_msg_type, 0);
++
++	ret = hfi_write_cmd(hfi, pkt);
++	if (ret)
++		goto out;
++
++	while (READ_ONCE(hfi->last_msg_type) != want) {
++		if (wait_for_completion_timeout(&hfi->cmd_complete,
++						msecs_to_jiffies(20))) {
++			irq_seen = true;
++			reinit_completion(&hfi->cmd_complete);
++			continue;
++		}
++		if (icp_hfi_process_msg_queue(hfi) && !irq_seen)
++			dev_warn_once(hfi->dev, "HFI: message arrived without an interrupt\n");
++		icp_hfi_flush_debug_queue(hfi);
++		if (time_after(jiffies, deadline)) {
++			struct hfi_q_hdr *c = &hfi->q_tbl->q_hdr[HFI_Q_CMD_TYPE];
++			struct hfi_q_hdr *m = &hfi->q_tbl->q_hdr[HFI_Q_MSG_TYPE];
++
++			dev_err(hfi->dev, "HFI: no 0x%x for 0x%x (cmd r%u w%u, msg r%u w%u)\n",
++				want, hfi_pkt_type((void *)pkt), c->read_idx, c->write_idx,
++				m->read_idx, m->write_idx);
++			icp_hfi_dump_sfr(hfi);
++			ret = -ETIMEDOUT;
++			goto out;
++		}
++	}
++out:
++	mutex_unlock(&hfi->cmd_lock);
++	return ret;
++}
++
++static int hfi_set_debug(struct icp_hfi *hfi, u32 level)
++{
++	struct hfi_msg_debug_level pkt = {
++		.hdr.size = sizeof(pkt),
++		.hdr.type = HFI_CMD_SYS_SET_PROPERTY,
++		.num_prop = 1,
++		.prop_id = HFI_PROP_SYS_DEBUG_CFG,
++		.cfg.debug_config = level,
++		.cfg.debug_mode = HFI_DEBUG_MODE_QUEUE,
++	};
++	int ret;
++
++	mutex_lock(&hfi->cmd_lock);
++	ret = hfi_write_cmd(hfi, &pkt);
++	mutex_unlock(&hfi->cmd_lock);
++	return ret;
++}
++
++int icp_hfi_core_init(struct icp_hfi *hfi)
++{
++	struct hfi_cmd_sys_init init = {
++		.hdr.size = sizeof(init),
++		.hdr.type = HFI_CMD_SYS_INIT,
++	};
++	struct hfi_cmd_ping ping = {
++		.hdr.size = sizeof(ping),
++		.hdr.type = HFI_CMD_SYS_PING,
++		.user_data = HFI_PING_COOKIE,
++	};
++	struct hfi_msg_ping_ack *ack = (void *)hfi->last_msg;
++	int ret;
++
++	ret = hfi_cmd_wait(hfi, &init, HFI_MSG_SYS_INIT_DONE);
++	if (ret)
++		return ret;
++
++	ret = hfi_set_debug(hfi, HFI_DEBUG_MSG_HIGH | HFI_DEBUG_MSG_ERROR |
++			    HFI_DEBUG_MSG_FATAL);
++	if (ret)
++		dev_warn(hfi->dev, "HFI: debug configuration not sent: %d\n", ret);
++
++	ret = hfi_cmd_wait(hfi, &ping, HFI_MSG_SYS_PING_ACK);
++	if (ret)
++		return ret;
++	if (ack->user_data != HFI_PING_COOKIE)
++		return -EPROTO;
++
++	hfi->ready = true;
++	dev_info(hfi->dev, "HFI ready: firmware 0x%08x, ping 0x%016llx\n",
++		 hfi->fw_version, ack->user_data);
++	return 0;
++}
++
++void icp_hfi_dump_sfr(struct icp_hfi *hfi)
++{
++	struct hfi_sfr *sfr = hfi->sfr;
++
++	if (!sfr || !sfr->msg[0])
++		return;
++	dev_err(hfi->dev, "ICP failure reason: %.*s\n",
++		(int)min_t(u32, sfr->size, HFI_SFR_LOG_SIZE), sfr->msg);
++}
+diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.h b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
+index a63a0395c0f1751799562c71a87e9c8d488566bf..fae409a8474afd9f8488273b5a5967564158d7e2 100644
+--- a/drivers/media/platform/qcom/camss/camss-icp-hfi.h
++++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
+@@ -10,6 +10,9 @@
+ 
+ #include <linux/types.h>
+ 
++struct icp_device;
++struct icp_ubwc_cfg;
++
+ #define HFI_QTBL_VERSION			0xFFFFFFFF
+ 
+ /* ICP firmware boot command/response */
+@@ -254,7 +257,10 @@ struct icp_hfi {
+ 	* Synchronization
+ 	*/
+ 	struct mutex cmd_lock;
++	struct mutex msg_lock;		/* message/debug queue readers */
+ 	struct completion cmd_complete;
++	u32 last_msg_type;
++	u32 last_msg[32];		/* head of the last message read */
+ 
+ 	/*
+ 	 * State
+@@ -419,7 +425,8 @@ struct hfi_debug_cfg {
+ } __packed;
+ 
+ struct hfi_msg_debug_level {
+-	struct hfi_cmd_set_property hdr;
++	struct hfi_pkt_hdr hdr;
++	u32 num_prop;
+ 	u32 prop_id;
+ 	struct hfi_debug_cfg cfg;
+ } __packed;
+diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
+index 1617dea15a5a767d3b6b3c754311531d11c6d67d..5abaf2ff0d9b5ea802da1da61e9474ff2f93324c 100644
+--- a/drivers/media/platform/qcom/camss/camss-icp.c
++++ b/drivers/media/platform/qcom/camss/camss-icp.c
+@@ -22,6 +22,7 @@
+ #include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/soc/qcom/mdt_loader.h>
++#include <linux/string.h>
+ 
+ #include "camss-icp.h"
+ #include "camss-icp-hfi.h"
+@@ -55,9 +56,9 @@
+ #define HFI_MAX_ICC_PATHS		4
+ struct camss_icp_resources {
+ 	int pas_id;
+-	const char ** const clk_names;
++	const char * const *clk_names;
+ 	int clk_num;
+-	const char ** const noc_names;
++	const char * const *noc_names;
+ 	int noc_num;
+ 	struct hfi_resources hfi_res;
+ };
+@@ -127,7 +128,7 @@ static int icp_load_firmware(struct camss_icp *icp)
+ 	struct device_node *node;
+ 	struct resource res;
+ 	const char *fw_name;
+-	char fw_path[64];
++	char fw_path[96];
+ 	void *vaddr;
+ 	ssize_t fw_size;
+ 	int ret;
+@@ -136,7 +137,11 @@ static int icp_load_firmware(struct camss_icp *icp)
+ 	if (ret)
+ 		return ret;
+ 
+-	snprintf(fw_path, sizeof(fw_path), "%s.mdt", fw_name);
++	/* a name with an extension is used as is (a single-file .mbn) */
++	if (strchr(kbasename(fw_name), '.'))
++		strscpy(fw_path, fw_name, sizeof(fw_path));
++	else
++		snprintf(fw_path, sizeof(fw_path), "%s.mdt", fw_name);
+ 
+ 	node = of_parse_phandle(icp->dev->of_node, "memory-region", 0);
+ 	if (!node)
+@@ -221,7 +226,7 @@ static irqreturn_t camss_icp_isr(int irq, void *data)
+ }
+ 
+ /* Dump GP registers for debugging */
+-void icp_dump_gp_regs(struct camss_icp *icp, const char *label)
++static void icp_dump_gp_regs(struct camss_icp *icp, const char *label)
+ {
+ 	u32 regs[20];
+ 	int i;
+@@ -237,10 +242,9 @@ void icp_dump_gp_regs(struct camss_icp *icp, const char *label)
+ 			 0x20 + i * 4, regs[i], regs[i+1], regs[i+2], regs[i+3]);
+ }
+ 
+-void icp_hfi_latch_regs(struct camss_icp *icp)
++static void icp_hfi_latch_regs(struct camss_icp *icp)
+ {
+ 	struct icp_hfi *hfi = &icp->hfi;
+-	struct device *dev = hfi->dev;
+ 
+ 	/* Shared memory */
+ 	writel(hfi->hfi_mem.shmem.dma_addr, icp->csr_base + HFI_REG_SHARED_MEM_PTR);
+@@ -573,7 +577,7 @@ static const char * const x1e80100_noc_names [] = {
+ 	"sf_icp"
+ };
+ 
+-struct camss_icp_resources x1e80100_icp_res = {
++static const struct camss_icp_resources x1e80100_icp_res = {
+ 	.pas_id = 33,
+ 	.clk_names = x1e80100_clk_names,
+ 	.clk_num = ARRAY_SIZE(x1e80100_clk_names),

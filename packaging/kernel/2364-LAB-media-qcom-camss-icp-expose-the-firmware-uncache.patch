@@ -1,0 +1,35 @@
+From 52d3bd5283e1d71684d36413c76841ed17957774 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Fri, 16 Oct 2026 11:06:43 -0400
+Subject: [PATCH 2364/2368] LAB: media: qcom: camss: icp: expose the firmware
+ uncached heap in debugfs
+
+Lab-only: a read-only debugfs blob (camss-icp/fwmem) of the firmware's
+uncached heap, used to inspect the burst lists, the firmware's own CDM
+command lists and the write-engine state after a frame.
+
+Assisted-by: Claude:claude-fable-5-1
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 040670b153a7054cf48294522ed6ed9dd79612bc)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
+index 8d87999ccf78a9058be6df9e026f11d35b54dfc7..f5ada94a23e8630aa9f7c44542f0d208d4d02cc0 100644
+--- a/drivers/media/platform/qcom/camss/camss-icp.c
++++ b/drivers/media/platform/qcom/camss/camss-icp.c
+@@ -785,7 +785,16 @@ static void icp_lab_init(struct camss_icp *icp)
+ 		}
+ 	}
+ 
++	/* lab: expose the firmware uncached heap (BL burst lists, the fw's own CDM
++	 * command lists at +0x4ac8, WeStates) for post-mortem analysis. */
+ 	icp->dbg = debugfs_create_dir("camss-icp", NULL);
++	{
++		static struct debugfs_blob_wrapper fw_blob;
++
++		fw_blob.data = hm->fwuncached.vaddr;
++		fw_blob.size = hm->fwuncached.size;
++		debugfs_create_blob("fwmem", 0400, icp->dbg, &fw_blob);
++	}
+ 	debugfs_create_file("cmd", 0600, icp->dbg, icp, &icp_lab_cmd_fops);
+ 	debugfs_create_file("alloc", 0600, icp->dbg, icp, &icp_lab_alloc_fops);
+ 	if (lab_lastfw) {

@@ -1,0 +1,54 @@
+From 77d49296f6217c26c1783662aaf8030ede2ac3b5 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Tue, 13 Oct 2026 18:12:07 -0400
+Subject: [PATCH 2165/2165] Bluetooth: SMP: distribute the identity address
+ when bonding
+
+build_pairing_cmd() only offers our Identity Information and Identity
+Address Information when privacy is enabled. Without privacy the peer
+never learns our identity address, and bonds without it.
+
+Some peripherals need it. The Microsoft Surface Slim Pen 2 only
+advertises to reconnect, after a button press, if the host it bonded
+with distributed its identity. Windows always does. Paired by Linux, the
+pen stays silent, and enabling privacy is no workaround: the host then
+scans and connects from a resolvable private address, while the pen
+directs its pairing advertisements at the public address it was given.
+
+Offer the identity key whenever we bond over LE. Without privacy,
+hdev->irk is all zeros, which the specification defines as having no
+resolvable private address (Core Specification, Vol 3, Part H, 3.6.4),
+so the peer receives our public or static identity address and no usable
+IRK. The peer still decides: the Pairing Response masks the
+distribution down to what it accepts. Cross-transport key derivation
+over BR/EDR is unchanged.
+
+Tested on a Microsoft Surface Pro 11 (X1E80100, WCN7850): the Slim Pen 2
+now accepts our identity key, and reconnects on a single click, double
+click and press-and-hold after it has dropped the link. The Surface Pro
+Flex Keyboard also accepts our identity key over its out-of-band pairing
+and still reconnects.
+
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 35579dba49cad21e7dd6e0eb071c685a9a5a7a13)
+
+diff --git a/net/bluetooth/smp.c b/net/bluetooth/smp.c
+index 513ad237611f8ce3529663f77df5b9af0eae0046..1c7186d0b5fd5565246d0b427fcafaf13ecf8dd6 100644
+--- a/net/bluetooth/smp.c
++++ b/net/bluetooth/smp.c
+@@ -633,7 +633,13 @@ static void build_pairing_cmd(struct l2cap_conn *conn,
+ 	u8 local_dist = 0, remote_dist = 0, oob_flag = SMP_OOB_NOT_PRESENT;
+ 
+ 	if (hci_dev_test_flag(hdev, HCI_BONDABLE)) {
+-		local_dist = SMP_DIST_ENC_KEY | SMP_DIST_SIGN;
++		/* Always distribute our identity address when bonding, so the
++		 * peer can tell who it is bonded with. Without privacy the IRK
++		 * sent along with it is all zeros, which the specification
++		 * defines as having no resolvable private address. Some
++		 * peripherals only reconnect to hosts that did this.
++		 */
++		local_dist = SMP_DIST_ENC_KEY | SMP_DIST_SIGN | SMP_DIST_ID_KEY;
+ 		remote_dist = SMP_DIST_ENC_KEY | SMP_DIST_SIGN;
+ 		authreq |= SMP_AUTH_BONDING;
+ 	} else {

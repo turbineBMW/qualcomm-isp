@@ -1,0 +1,26 @@
+From d94e0b6a14f5f016750123fccf83c9ec13a9a3bd Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Tue, 13 Oct 2026 19:28:03 -0400
+Subject: [PATCH 2320/2368] phy: core: add PHY_MODE_MIPI_CPHY
+
+MIPI C-PHY is a three-wire, trio based physical layer that shares silicon
+with D-PHY on many camera receivers but is programmed differently and has
+no clock lane. Give consumers a mode value to ask a combination PHY for it,
+so that a CSI-2 receiver can select the C-PHY personality the same way it
+selects D-PHY today.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 46575d5a8cba1c6e45de02a126363db1fc6cd517)
+
+diff --git a/include/linux/phy/phy.h b/include/linux/phy/phy.h
+index 14b924a88411fe212d9b4b91b958ba318b93255e..3d96c036109e450cf8ed5ef077b4f2b138e09f10 100644
+--- a/include/linux/phy/phy.h
++++ b/include/linux/phy/phy.h
+@@ -41,6 +41,7 @@ enum phy_mode {
+ 	PHY_MODE_PCIE,
+ 	PHY_MODE_ETHERNET,
+ 	PHY_MODE_MIPI_DPHY,
++	PHY_MODE_MIPI_CPHY,
+ 	PHY_MODE_SATA,
+ 	PHY_MODE_LVDS,
+ 	PHY_MODE_DP,

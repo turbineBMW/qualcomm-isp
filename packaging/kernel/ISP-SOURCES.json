@@ -1,0 +1,570 @@
+{
+  "status": "Source release; Surface Pro 11 Denali OLED capture and idle/active suspend acceptance passed 2026-10-17; other boards unqualified",
+  "omarchy_recipe_commit": "c8a524abb172b5f92e89da839907d133cced4baf",
+  "omarchy_recipe_path": "pkgbuilds/linux-omarchy-aarch64",
+  "omarchy_version": "7.2.8-13",
+  "package_version": "7.2.8-13.1",
+  "kernel_release": "7.2.8-13.1-omarchy-isp+",
+  "upstream_linux_base": "9a66fdc0d7fd55f54235524a73435af99051e46f",
+  "omarchy_base_commit": "e8361fb726ce8cd07c82f80bf8e90a6e85516f82",
+  "surface_base_commit": "77d49296f6217c26c1783662aaf8030ede2ac3b5",
+  "isp_commit": "84ef6bd528015476a24aa380717c8434e7bbfa34",
+  "groups": [
+    {
+      "name": "surface-prerequisites",
+      "range": "omarchy-base/7.2.8-13..baseline/surface-prerequisites",
+      "patches": [
+        {
+          "file": "2100-irqchip-qcom-pdc-Restructure-version-support.patch",
+          "sha256": "37ec4259ef3f3408fee1f6b9fabbd8cf717bf320f31c9a9724d15212bcf572bd"
+        },
+        {
+          "file": "2101-irqchip-qcom-pdc-Move-all-static-variables-to-struct.patch",
+          "sha256": "05c01dae6337c69e94c00b2d009c96826aa2e692b0c6a09f8424de6d693b5e12"
+        },
+        {
+          "file": "2102-irqchip-qcom-pdc-Differentiate-between-direct-SPI-an.patch",
+          "sha256": "ee762e70ff49d4d7bcd604a3a9123f4fdec89ba2521ec6fe877945922a1c8797"
+        },
+        {
+          "file": "2103-irqchip-qcom-pdc-Configure-PDC-to-pass-through-mode.patch",
+          "sha256": "c9d181a871d87bd41e313a33c92e7db5fbd590e8e10af59b430c6bdf97609501"
+        },
+        {
+          "file": "2104-irqchip-qcom-pdc-Fix-kernel-doc-for-qcom_pdc_gic_sec.patch",
+          "sha256": "9c448cd9f6e7025df8dff5c52d423a23df7f8ed1cbfffcd632613714c829c6a3"
+        },
+        {
+          "file": "2105-arm64-dts-qcom-x1e80100-Reduce-OS-PDC-DRV-span-to-0x.patch",
+          "sha256": "d560377527a57d07496f3b42026fd2f40bbb617a44546ee1f566f1bd8a17c7f4"
+        },
+        {
+          "file": "2106-pinctrl-qcom-Acknowledge-IRQs-for-PDC-interrupt-cont.patch",
+          "sha256": "349f9d75c2f5928a8e46e4b9c9cfc345b771be3eea4e308379d22a04c04d0e9e"
+        },
+        {
+          "file": "2107-Revert-pinctrl-qcom-x1e80100-Bypass-PDC-wakeup-paren.patch",
+          "sha256": "6ccf83fdff1d2162babec31dc90b6d5b7f356cc3cf6a63808ef90dae33c09105"
+        },
+        {
+          "file": "2108-arm64-dts-qcom-x1e80100-Add-deepest-idle-state.patch",
+          "sha256": "94f88e9552b644beb90823c452a2830226f605c5b71e28fab46b4dc24bd46354"
+        },
+        {
+          "file": "2109-Documentation-Correction-in-HID-output_report-callba.patch",
+          "sha256": "4f99e4a19160d91c296b14b1fca6692187ae14ebe12e029e05759c5ab9776b60"
+        },
+        {
+          "file": "2110-HID-Add-BUS_SPI-support-and-define-HID_SPI_DEVICE-ma.patch",
+          "sha256": "b2c7cdfcda77302ebb1e464cc1d2c75c0dc585ec52ea8555f48432c39f3809df"
+        },
+        {
+          "file": "2111-HID-spi-hid-add-transport-driver-skeleton-for-HID-ov.patch",
+          "sha256": "beb16d7b76891b343c8f2408add8b7927c66c1cd95f7037a99eddaae9d9a8ca0"
+        },
+        {
+          "file": "2112-HID-spi-hid-add-spi-hid-driver-HID-layer.patch",
+          "sha256": "dcd4c5ab1429168895ed1aa834b41184e6283c9a8acb1e4118be608822b46189"
+        },
+        {
+          "file": "2113-HID-spi-hid-add-HID-SPI-protocol-implementation.patch",
+          "sha256": "573523f3b2c64b052ba43d53f111ef0e09745be027a724fd34f7ae5d0cfaeef8"
+        },
+        {
+          "file": "2114-HID-spi_hid-add-spi_hid-traces.patch",
+          "sha256": "04064a15788dbe74c18e830a7702015800ce90fcdb48c1394c0072f6616510b8"
+        },
+        {
+          "file": "2115-HID-spi_hid-add-ACPI-support-for-SPI-over-HID.patch",
+          "sha256": "cf070c3e929e80553b046df95030785557e837681f62809a1f13ce4c5b94679e"
+        },
+        {
+          "file": "2116-HID-spi_hid-add-device-tree-support-for-SPI-over-HID.patch",
+          "sha256": "1a93a984a93c980f2df6ba937fa098b7c0a34c77cf13e12dbcb60a53937c5806"
+        },
+        {
+          "file": "2117-dt-bindings-input-Document-hid-over-spi-DT-schema.patch",
+          "sha256": "52c1c2bc72f75e60789b3fe8454a65acd752eca935ba4bcebb9f664d097b4bdd"
+        },
+        {
+          "file": "2118-HID-spi-hid-add-power-management-implementation.patch",
+          "sha256": "950546f55d5d1d19b385756a595d888b089d969f198dfc855809c64235fab4c7"
+        },
+        {
+          "file": "2119-HID-spi-hid-add-panel-follower-support.patch",
+          "sha256": "e2ab532de81e3a4d242593c73127db269ff8cc7e0f3a6670ed9019cc57cea9b4"
+        },
+        {
+          "file": "2120-dt-bindings-media-qcom-x1e80100-camss-correct-resour.patch",
+          "sha256": "ad163a2a94a2cacf4b0b6436d37588cef6ca3520b24bc066571ec54a2b3f15af"
+        },
+        {
+          "file": "2121-dt-bindings-media-add-OV13858-and-VD55G0-sensors.patch",
+          "sha256": "06bf39534b8394d5807d178cc48374ed9bc26be68c1d09fc162940c6f616eadf"
+        },
+        {
+          "file": "2122-media-qcom-camss-unwind-failed-stream-starts.patch",
+          "sha256": "66da77694ac1d3c0e0f1b7d38c96d2714e815f7173a04a2b70f4ecd9013d004b"
+        },
+        {
+          "file": "2123-media-qcom-camss-support-X1E80100-C-PHY-links.patch",
+          "sha256": "0a2a16fa0362a423aa1d6aa41a7319af8e332022d130aadb97c130c40f23495e"
+        },
+        {
+          "file": "2124-Documentation-media-record-Surface-Pro-11-camera-pro.patch",
+          "sha256": "ca2d322fb69495cd9b2a1c7702ba2183506e73350f92cb5178ca2c8d26d26d3b"
+        },
+        {
+          "file": "2125-wifi-ath12k-Add-support-for-disabling-rfkill-via-dev.patch",
+          "sha256": "ab3c96dfca728c7a68857ce11b5a54e2450d4fbf86836cf7838a77240e3398dd"
+        },
+        {
+          "file": "2126-arm64-dts-qcom-denali-preserve-ath12k-rfkill-quirk.patch",
+          "sha256": "1c54d07589c0d154066ee6324ea45d735999f729a0fdae3917cb6b3f8349dafd"
+        },
+        {
+          "file": "2127-dt-bindings-net-qcom-ath12k-document-disable-rfkill.patch",
+          "sha256": "6220ca56a7c9e84d2baa30716ac366d00f3e6b3084b5d02822b94f74d24cf435"
+        },
+        {
+          "file": "2128-media-qcom-camss-restore-observed-Denali-C-PHY-seque.patch",
+          "sha256": "ee4d5e3cdf9196b413b5c53ca01b3f37cc4001de10df17338fdd9cfc675dbc37"
+        },
+        {
+          "file": "2129-platform-surface-recheck-tablet-mode-after-resume.patch",
+          "sha256": "70f2bd20a4a7abf86b7d57e27e5784ad103bcb37c2bcd608deb1aa244c6f271c"
+        },
+        {
+          "file": "2130-platform-surface-resync-tablet-mode-on-KIP-connectio.patch",
+          "sha256": "51bd9a6302385b69830919766c8d88277ebe84886a5cb68445eacecd4bb66bb6"
+        },
+        {
+          "file": "2131-platform-surface-retry-KIP-cover-state-while-settlin.patch",
+          "sha256": "02d912e431c386c0c3d6cf464de7414fc7c25c070463d78569dd074128e01e30"
+        },
+        {
+          "file": "2132-power-supply-qcom_battmgr-preserve-charge-limits.patch",
+          "sha256": "451ae2c9d6824e5d559ad575210473cc4cf6d983b5b2499fc4dbc8df77f33c77"
+        },
+        {
+          "file": "2133-media-ov13858-retry-the-first-SCCB-write-after-power.patch",
+          "sha256": "a6d56e6d17ca850b5568fed22b687edf75e1ff73ffbd05e4eb08a78929f07c66"
+        },
+        {
+          "file": "2134-drm-msm-dp-restrict-the-EDID-read-workaround-to-EDID.patch",
+          "sha256": "1293d2daf9db1a1a880058f14739a8af3fec39ca9cccc3e85ecaa2a65fe6bf7c"
+        },
+        {
+          "file": "2135-drm-msm-dp-attach-the-AUX-i2c-adapter-to-the-connect.patch",
+          "sha256": "530c51a7c1b05072a441a3c3bdf5a1865ed0cec54f97701150d1c1e52a0d3677"
+        },
+        {
+          "file": "2136-irqchip-qcom-pdc-report-the-selected-X1E-mode.patch",
+          "sha256": "9db5c9466968ad79d8b61d92bb70226d4607e080101071197614279dd9143379"
+        },
+        {
+          "file": "2137-soc-qcom-smp2p-reset-inbound-state-only-on-restart.patch",
+          "sha256": "cced049772950a7010bb05fe0e849b5502ebca731c4f759c513365c699262090"
+        },
+        {
+          "file": "2138-arm64-dts-qcom-x1e80100-drop-QCE-sleep-bandwidth-vot.patch",
+          "sha256": "e8e403190af2a845416806ae839786c7afc68e8d653d136f16913c36e353dec8"
+        },
+        {
+          "file": "2139-platform-surface-aggregator_registry-add-KIP-OOB-pai.patch",
+          "sha256": "e6fb775d9a8bf108754748c9b0865cf04e8055db949d0599bc0008d8899e4621"
+        },
+        {
+          "file": "2140-Bluetooth-SMP-implement-LE-legacy-out-of-band-pairin.patch",
+          "sha256": "3718b9b07c1d8e449a35ac204eb3ec13cd3837e74ea5d95a4ca7f1b44506bcf1"
+        },
+        {
+          "file": "2141-drm-msm-dpu-re-program-colour-processing-blocks-on-t.patch",
+          "sha256": "6ba9409284e4399b6685e1d0674965d457d9fdd35f155a96f3b7915dd26f48fb"
+        },
+        {
+          "file": "2142-HID-surface-hid-suspend-HID-clients-on-shutdown.patch",
+          "sha256": "78e8fc06a83e083dd269227890edfad3519d4a3638c898588b2699d6c29efd06"
+        },
+        {
+          "file": "2143-arm64-skip-the-EFI-reset-path-when-restarting-from-a.patch",
+          "sha256": "2a9f132771d37f2b75b04b40f10fe360a847e20dfbe13ad9419898560e461d40"
+        },
+        {
+          "file": "2144-drm-msm-dpu-Reassert-core-clock-rate-on-runtime-resu.patch",
+          "sha256": "09d4e00b3d6bff57a625b7229db270d9b34c3dd53db29a1b47d6b1ac037821a4"
+        },
+        {
+          "file": "2145-drm-msm-dp-use-direct-SDP-flush-for-PSR.patch",
+          "sha256": "907e7ab1d468b8e0630bf7440593456a6e365619c7dc749632345d355059f808"
+        },
+        {
+          "file": "2146-ASoC-qcom-x1e80100-raise-the-speaker-volume-ceiling-.patch",
+          "sha256": "989a68225cce5bd913fc0c1c583395385fe016b50fb2568d763fe65f7179b508"
+        },
+        {
+          "file": "2147-Bluetooth-hci_qca-Drop-unused-event-during-BT-on.patch",
+          "sha256": "31886b5db67712522fa2cab540b13650ed2546e329a06beb3eb8f54f0b1cb865"
+        },
+        {
+          "file": "2148-Bluetooth-SCO-accept-incoming-eSCO-with-Enhanced-Acc.patch",
+          "sha256": "b01ef7b53497694c420a23316c85bb0b759acff17d1c2921eea42376fe575308"
+        },
+        {
+          "file": "2149-wifi-ath12k-avoid-sleeping-PCI-wakeup-during-panic-r.patch",
+          "sha256": "70897bddd738d70c6c34b120d9d82259011c7c0b75a2e995d7fc5f65fbe00e57"
+        },
+        {
+          "file": "2150-arm64-dts-qcom-hamoa-Drop-cluster_cl5-idle-state-fro.patch",
+          "sha256": "845c89123dcc8503df30bafde53f4ffa6313b5a8689d8186c63e8eca12aed255"
+        },
+        {
+          "file": "2151-arm64-qcom-add-Surface-Pro-11-platform-support.patch",
+          "sha256": "4805499186916ddfe3c05a12e4987994a39e683650dc1ec439a018fa448b0613"
+        },
+        {
+          "file": "2152-HID-spi-fix-G6-touch-digitizer-module-alias.patch",
+          "sha256": "7f6acfaf4072796a84b47a4bfc9e75f8a6b0f64508ccdfc96d4034dcc5de2ad7"
+        },
+        {
+          "file": "2153-ASoC-wsa884x-recover-PA-faults-and-apply-SP11-2S-4-o.patch",
+          "sha256": "c9462b958ead5187615195b3ece1533fd8d7ee81374840df6443baf6d5cf3126"
+        },
+        {
+          "file": "2154-arm64-dts-qcom-x1e80100-Add-CAMCC-block-definition.patch",
+          "sha256": "f8ec00da0634fd02bd460472ba4e069b8c19cfe177a7d9b66b66b581674cffe1"
+        },
+        {
+          "file": "2155-arm64-dts-qcom-hamoa-add-camera-subsystem-nodes.patch",
+          "sha256": "1dcde0dc690d3ee0ac0b9657a64959c26f488eefa9bca3b0bc089a48df5be7a3"
+        },
+        {
+          "file": "2156-media-i2c-add-Surface-Pro-11-camera-sensors.patch",
+          "sha256": "c6fa893a2f6fa98c3b4712eb1ee6ce96474e88908d1360eea3d1e284d2f24b22"
+        },
+        {
+          "file": "2157-arm64-dts-qcom-enable-Surface-Pro-11-cameras.patch",
+          "sha256": "e2de707a3a9b9214d2f5a7206d2753ab562d58e434b94f822fe5e3b0e94e6d34"
+        },
+        {
+          "file": "2158-arm64-dts-qcom-denali-enable-verified-IR-illuminator.patch",
+          "sha256": "cdf1f0f8d2afd81db0da809b9bacd989205a0735ca6812f0dd054c00b6e41479"
+        },
+        {
+          "file": "2159-media-imx681-write-exposure-through-the-24-bit-latch.patch",
+          "sha256": "8e4bb21953dbae8a0a4f60c0523a9036e34c0eda1d596bdf4b75620e4c29ca32"
+        },
+        {
+          "file": "2160-media-imx681-expose-analogue-gain-as-a-linear-value.patch",
+          "sha256": "904e19490d7c6f68fbe4c65936b51dea14f277a8b8db53ca03030d1f576fdf51"
+        },
+        {
+          "file": "2161-media-i2c-vd55g0-power-the-sensor-off-only-once-when.patch",
+          "sha256": "383f73ae476a657e0c75a3e88dc7e3981d762f90734b6b038bcaf2deabedeb0d"
+        },
+        {
+          "file": "2162-media-i2c-vd55g0-register-as-a-sensor-subdevice.patch",
+          "sha256": "5e84ee5911cafb9832a680c9d0a55edaf9c7768c75a1ff7bd22fd279b63992f4"
+        },
+        {
+          "file": "2163-arm64-dts-qcom-x1-microsoft-denali-describe-the-came.patch",
+          "sha256": "0cbcc1f273b5559572cabd7a10d1ff3a07559828c8ab7ceea8849fba61d40c80"
+        },
+        {
+          "file": "2164-Bluetooth-SMP-ignore-an-all-zero-IRK.patch",
+          "sha256": "4614f24b5935142b609bedf9909d303677c614a29dc0487f29809ecf23b4c317"
+        },
+        {
+          "file": "2165-Bluetooth-SMP-distribute-the-identity-address-when-b.patch",
+          "sha256": "609937cd342732030fb418906c41fc52af112fa8f8ea2bed7685625eeb940112"
+        }
+      ]
+    },
+    {
+      "name": "isp-port",
+      "range": "baseline/surface-prerequisites..HEAD",
+      "patches": [
+        {
+          "file": "2300-media-qcom-camss-use-fwnode_graph_for_each_endpoint_.patch",
+          "sha256": "790f7bfefb68fd67ceab2754fe767a61a6521c0e08a74f5feb9edafc072b0858"
+        },
+        {
+          "file": "2301-phy-core-Add-phy_get_by_of_node.patch",
+          "sha256": "ffeebe6fd12b48f293c23484536dad25eeb370506f3834c9f315076f42008875"
+        },
+        {
+          "file": "2302-phy-core-Add-devm_phy_get_by_of_node.patch",
+          "sha256": "f66b8376245eaee83678ef877700c5447b191b12b18427454a06b4c3a89a97b8"
+        },
+        {
+          "file": "2303-media-qcom-camss-vfe-17x-Fix-write-master-buffer-don.patch",
+          "sha256": "c9ea5791acabde7849968d653682f4d1331b49bc79ed4b9cbce4d2c48e7b0fdb"
+        },
+        {
+          "file": "2304-media-qcom-camss-vfe-17x-Fix-write-master-selection-.patch",
+          "sha256": "9d815869d7042027f0f0c19781daa7523bfbd3ff315eeb6245ec7a4018a794d5"
+        },
+        {
+          "file": "2305-media-qcom-camss-vfe-Fix-VFE-reset-while-another-lin.patch",
+          "sha256": "3475b7e9d88251ca09580e5e0f4995d9680b445fe245a3390f0b892915d675ad"
+        },
+        {
+          "file": "2306-media-qcom-camss-Add-gcc_axi_hf-to-8775p-VFE-lite-cl.patch",
+          "sha256": "8a0a4c8419d8327778f73e7b4cedc4c39da5c7793fe4e6036f2142565c76793c"
+        },
+        {
+          "file": "2307-media-qcom-camss-Add-PM-clock-support-and-integrate-.patch",
+          "sha256": "108367ddcc8b406acb5e75e642cf97ee1495950394f4bd7c6b8bd2a0ddd3fffc"
+        },
+        {
+          "file": "2308-media-qcom-camss-Add-PM-clock-definitions-for-QCM229.patch",
+          "sha256": "dc1c0c50bc62d792da4e852e742a3e2a3cd6b7cc589a9d150c55c60cd6a9f6a9"
+        },
+        {
+          "file": "2309-media-qcom-camss-Drop-top_ahb-ahb-axi-from-QCM2290-s.patch",
+          "sha256": "affc1883b71ab79b1271fd9bd32264c16426760b0ceaefa46b4e3dfd5228e33c"
+        },
+        {
+          "file": "2310-media-qcom-camss-Report-hardware-version-via-media-c.patch",
+          "sha256": "c5f32d205c86eca2f36286e4739c22dcd9a402f2085c166dac00962f0cd09e84"
+        },
+        {
+          "file": "2311-dt-bindings-media-qcom-x1e80100-camss-Make-vdd-csiph.patch",
+          "sha256": "728ed4c33c91209bfc7677b07b8bec1745ebb995d2ac86d1c4e22a3df84a2952"
+        },
+        {
+          "file": "2312-media-qcom-camss-Add-Glymur-compatible.patch",
+          "sha256": "ac859f7a5a34ac8d18be21e9bfe0c5ed9a8523707891d487708e58531f98353c"
+        },
+        {
+          "file": "2313-phy-qcom-mipi-csi2-Add-a-CSI2-MIPI-DPHY-driver.patch",
+          "sha256": "2410fe3d805ad791481eb6d6dfe707a2e8f41f68c547ead47b133b247a36a4b7"
+        },
+        {
+          "file": "2314-media-qcom-camss-Add-support-for-PHY-API-devices.patch",
+          "sha256": "97615f87ba8478fba18007c605f9d049167e21555a5ad01e0989976fceffb9a6"
+        },
+        {
+          "file": "2315-media-qcom-camss-Use-data-lanes-starting-at-1-for-ne.patch",
+          "sha256": "a715ff8ccae5d24db2df1ae8724b33b88d7e5cdc659827bf101f0c330f7c3d34"
+        },
+        {
+          "file": "2316-media-qcom-camss-Drop-icc_res_qcs8300-resource-table.patch",
+          "sha256": "c4abc333f82751fcd6f8df93b132d8b20728d609312190f8933b28c9de53d97d"
+        },
+        {
+          "file": "2317-media-qcom-camss-Drop-csiphy_res_8300-phy-resource-t.patch",
+          "sha256": "cf5e2a09c26f4a0ef14e3864a075b4bead81f202b7badcc8171e93de19a8bdbc"
+        },
+        {
+          "file": "2318-device-property-Introduce-fwnode_graph_for_each_endp.patch",
+          "sha256": "f0c8eb24e4903bead899305f6f48e522c2396d5b29160e3579f09de2354a5636"
+        },
+        {
+          "file": "2319-media-qcom-camss-log-CSID-and-VFE-register-writes-un.patch",
+          "sha256": "f04517920e73f10447b2a5c1d059ac890150183f39e19086dc4df78aeb0f9cfe"
+        },
+        {
+          "file": "2320-phy-core-add-PHY_MODE_MIPI_CPHY.patch",
+          "sha256": "738643bc1757d7cf422908d714f63692f8549fbeceee3344e2667d34e2e954a2"
+        },
+        {
+          "file": "2321-phy-qcom-mipi-csi2-support-C-PHY-links-on-x1e80100.patch",
+          "sha256": "5de2402297f5466cae0448d116ac8ef2d9d6c77cf78874aac019a9e486b8aec0"
+        },
+        {
+          "file": "2322-media-qcom-camss-configure-C-PHY-links-through-the-P.patch",
+          "sha256": "5314c862c452e56b54f7a7eb5979f2de302eb01e4aad1a8fe447a2fc9a8eb203"
+        },
+        {
+          "file": "2323-arm64-dts-qcom-hamoa-add-CSI2-PHY-nodes.patch",
+          "sha256": "98b83334c3f1116a5121c415e9242bd3f1c0fd8d7d683cb2a1b55e1ea4bf6a77"
+        },
+        {
+          "file": "2324-arm64-dts-qcom-denali-connect-the-cameras-through-th.patch",
+          "sha256": "ca1f2ddc9fae2df2925bff22c372c3e5a1d48bab70ca4107ff2cd25b4407e15b"
+        },
+        {
+          "file": "2325-media-qcom-camss-vfe-look-up-the-line-only-after-val.patch",
+          "sha256": "9c5cca3a626725d9c70a591ce792ea783c79641b71e2791ede39225ed1bc219c"
+        },
+        {
+          "file": "2326-media-qcom-camss-x1e80100-run-the-IFE-pixel-path-to-.patch",
+          "sha256": "f6de32d0a7786bf491accd088e8dcb68b85fe99cd240bebaed258fc4f56d19e1"
+        },
+        {
+          "file": "2327-media-qcom-camss-vfe-scale-the-NOC-clock-by-bytes-fo.patch",
+          "sha256": "79f5fb823c6ca115795448f1f809b1095e7db34c32baa7cb0fa8b4d2aee3b265"
+        },
+        {
+          "file": "2328-media-qcom-camss-x1e80100-log-pixel-path-state-at-st.patch",
+          "sha256": "4fa79b1af7803428d09b7e88ff1d6b9076b99e164ca2b3869cdd14b28cdc1468"
+        },
+        {
+          "file": "2329-media-qcom-camss-x1e80100-pixel-path-bring-up-knobs-.patch",
+          "sha256": "4259a36cbef96584930dad2909f0ada83885139b1ce4a6a21313a6785f5c2005"
+        },
+        {
+          "file": "2330-media-qcom-camss-x1e80100-optional-full-IFE-window-d.patch",
+          "sha256": "b43ac661f8488cfe74b36e9efeab8b01df379b45ef10a5aec01e01751556aba7"
+        },
+        {
+          "file": "2331-media-qcom-camss-x1e80100-CSID-pixel-path-bring-up-k.patch",
+          "sha256": "ff8d85efa5d7b444fd3be811bb3532cde05ba1f46c0eb16206519503dad786ad"
+        },
+        {
+          "file": "2332-media-qcom-camss-x1e80100-program-the-IFE-output-sta.patch",
+          "sha256": "3fa85984ba32a3327af2ac4416bbff7474bd85c0f8178e15a4f3999ddb49088c"
+        },
+        {
+          "file": "2333-arm64-dts-qcom-hamoa-describe-the-whole-IFE-register.patch",
+          "sha256": "1311a267039bd397fa51ce3d499ecca0bdd6d83a90e41c3682fe35b2bb70a2b7"
+        },
+        {
+          "file": "2334-media-qcom-camss-x1e80100-program-demosaic-colour-tr.patch",
+          "sha256": "01aa954baeeba7ef2b842091da4741221e8bcfdbf5c6dd4832078e07a3394aaf"
+        },
+        {
+          "file": "2335-media-qcom-camss-x1e80100-white-balance-gamma-and-bl.patch",
+          "sha256": "a9afee7ff5656ded9e766d1b8063b749d880ca6ac5d9b7049375331501e6285a"
+        },
+        {
+          "file": "2336-media-qcom-camss-video-size-the-image-clamp-for-pack.patch",
+          "sha256": "89867a1ccaafa238704fb8698034fe856e1e274ce903a03f93e1de4c72cab330"
+        },
+        {
+          "file": "2337-media-qcom-camss-csid-handle-every-source-pad-crop-G.patch",
+          "sha256": "03a826d220e5563f40c21b15b79253cfaef17cace56c349d62e8183328e252bc"
+        },
+        {
+          "file": "2338-media-qcom-camss-vfe-white-balance-and-black-level-c.patch",
+          "sha256": "7fc3a1205ee0432ce9763e4594e2e54e4238cd25079366be0225c40f1043b8ab"
+        },
+        {
+          "file": "2339-media-qcom-camss-x1e80100-take-the-black-level-off-i.patch",
+          "sha256": "11f4304eabb400ff22ddfd776e52f380ce53cf1b157c5898f933744c6a9955be"
+        },
+        {
+          "file": "2340-media-i2c-imx681-start-with-a-full-frame-of-exposure.patch",
+          "sha256": "7de08f56284bd1c59601db29ecc3878bf467f4e5660913b32bc2ec4291d018fc"
+        },
+        {
+          "file": "2341-media-qcom-camss-x1e80100-hold-the-clock-gating-over.patch",
+          "sha256": "073ce4af563073695b7fb63f589665554d049bea58142b6f3b52f2e2a54d82fd"
+        },
+        {
+          "file": "2342-media-qcom-camss-x1e80100-program-the-colour-correct.patch",
+          "sha256": "a3ae867e491c92c9389edf458329e46925896800eec08cee865110e9202c89c4"
+        },
+        {
+          "file": "2343-media-qcom-camss-x1e80100-scale-the-PIX-output-with-.patch",
+          "sha256": "5711edf4d6e385284ba6ada3f763e0317f88678171a7484bca56d0c2a09bac1c"
+        },
+        {
+          "file": "2344-media-qcom-camss-x1e80100-scale-the-chroma-from-the-.patch",
+          "sha256": "2918a9a5c6515148e094897445af51f98d8e7bdcfcf960d21133640d598376e6"
+        },
+        {
+          "file": "2345-media-qcom-camss-register-the-media-device-once-the-.patch",
+          "sha256": "a6364b1203a03c64b701ab9f7fb1a0601a698e3fbe034d9a7fdaf581bca74a2b"
+        },
+        {
+          "file": "2346-media-qcom-camss-gamma-table-and-colour-matrix-contr.patch",
+          "sha256": "9c6b837a329e5580ededba6abbe4ce4a2512fa6f53fbef3f340aa5c39adc0a6c"
+        },
+        {
+          "file": "2347-media-qcom-camss-lens-shading-mesh-control-on-the-PI.patch",
+          "sha256": "2b633902e1f9bc04b2bcb6ae7192ebf93d62cbe1e75343e6c623cb93df0dbf1d"
+        },
+        {
+          "file": "2348-media-qcom-camss-take-the-pedestal-off-inside-the-le.patch",
+          "sha256": "de161f3f7e45ecc84c99a606c492abde5f69ba27329376e0698b610c23a9274d"
+        },
+        {
+          "file": "2349-media-qcom-camss-do-not-subtract-the-black-level-twi.patch",
+          "sha256": "b0f57a04199329093cb3a687793deec3cead1bd92a67975b47e09a7911177a0a"
+        },
+        {
+          "file": "2350-media-qcom-camss-Bayer-noise-reduction-ABF-on-the-PI.patch",
+          "sha256": "9fc520e5cd44f9d76f113abfd38c2e560153db0364acea5b223ce8a6c30bae0a"
+        },
+        {
+          "file": "2351-arm64-dts-qcom-x1e80100-Add-ICP-BPS-IPE-nodes.patch",
+          "sha256": "1d7f5007f677214d3505e7d3d6cff44d9c2c5cf78035145f14ac8f6e3d380852"
+        },
+        {
+          "file": "2352-media-qcom-camss-Launch-ICP-from-CAMSS.patch",
+          "sha256": "cf1ff242be505d739e485d4cacc84193a8ae9ca9982fe016cb4bdfd7e58c5021"
+        },
+        {
+          "file": "2353-media-qcom-camss-qcom-icp-Add-minimal-ICP-driver-wit.patch",
+          "sha256": "eb3716f57339355b90cfd8dfc2cefc92aad9c3c20482d421db005dcb4d2b967c"
+        },
+        {
+          "file": "2354-media-qcom-camss-qcom-icp-bps-Add-initial-v4l2-m2m-B.patch",
+          "sha256": "e238586971d94d7c946eaca9bf11607ad8537e647eab709940ee6f7f380f7ad1"
+        },
+        {
+          "file": "2355-media-qcom-camss-qcom-icp-ipe-Add-initial-v4l2-m2m-I.patch",
+          "sha256": "91ada81a22e59f597189471bd96411fd9de3bb2ba66e5812a930e7abf3c11a11"
+        },
+        {
+          "file": "2356-media-qcom-camss-Switch-on-ICP-and-BPS-as-make-optio.patch",
+          "sha256": "859a34451aafdfa679d46f197748849e8b6892897b8221e8ecd7937c8de84d80"
+        },
+        {
+          "file": "2357-media-qcom-camss-icp-add-the-HFI-queue-layer-and-bui.patch",
+          "sha256": "e71ad993d514c76bb297143099d7772bf270f45eab3710ed4831b174cbd4a0bc"
+        },
+        {
+          "file": "2358-arm64-dts-qcom-x1-microsoft-denali-ICP-firmware-name.patch",
+          "sha256": "1b38e11fd2a423cb899f245b4ac18e314c1e9a2da573c521cfbd2ff134ada5aa"
+        },
+        {
+          "file": "2359-media-qcom-camss-icp-use-the-ICP-v2-interrupt-regist.patch",
+          "sha256": "603eb386c7e9a9dac3be54d6ba9d09f1226b5fcf1e9bafd7e5cc4a2729994be9"
+        },
+        {
+          "file": "2360-LAB-media-qcom-camss-icp-debugfs-to-send-raw-HFI-pac.patch",
+          "sha256": "e911e5fddb501a72486dede46475abedf5004c4a8fd33353ba6276f3eaa4091b"
+        },
+        {
+          "file": "2361-media-qcom-camss-icp-reset-the-cores-and-place-HFI-m.patch",
+          "sha256": "2571d7a0bc10985f0ca4c01de70e3bd0ebb3edecfd61e968a58cce53622743cc"
+        },
+        {
+          "file": "2362-LAB-media-qcom-camss-icp-lab-buffers-in-IO-region-1-.patch",
+          "sha256": "d611e59abec4f2045d3b63a9367a71e7499421c29c2012ae3b3e88430b9d10d1"
+        },
+        {
+          "file": "2363-LAB-media-qcom-camss-icp-mirror-the-HFI-regions-into.patch",
+          "sha256": "1661316dc1e840af1c14e4f1f6ba6c96780a50e58d022e2f56749c28e8e47c78"
+        },
+        {
+          "file": "2364-LAB-media-qcom-camss-icp-expose-the-firmware-uncache.patch",
+          "sha256": "8f02d296d96cc5e4cb52c2952de0f9c28289c5e3191b52bd78694c7ea182b03e"
+        },
+        {
+          "file": "2365-media-imx681-match-the-validated-ISP-sensor-gain-int.patch",
+          "sha256": "62337bc5e8faf2e37106a3dce340f2064096f13525fa5171f7ec0a5b842d06f3"
+        },
+        {
+          "file": "2366-media-imx681-import-the-validated-frame-length-and-t.patch",
+          "sha256": "27e03339ac510cdad5b9b384f35cd46f3a0ddf1ac35550e2748038aeb355d7e3"
+        },
+        {
+          "file": "2367-media-camss-icp-import-the-validated-DMA-mapping-and.patch",
+          "sha256": "5d5c4b6e0d713e45a5393f2ca5c4045d0f353a0731693cf17ca09e2c647ce9fa"
+        },
+        {
+          "file": "2368-media-camss-import-the-validated-C-PHY-clock-and-pai.patch",
+          "sha256": "021ddb31f3bc3e21d0820d92ccade35a34e6f6a7d660191f68418f69da731133"
+        }
+      ]
+    }
+  ],
+  "PKGBUILD_sha256": "91b03797fd05224e9d62a147cdb1cb44b91879387578338096a2b17b3c98b519",
+  "config_sha256": "c73d9e61c50a465ea7e0613e15bbeac22975cc4e50103e85a4674fdf6b193ae1",
+  "opt_in_config_sha256": "e47a439b00db2f5b9202b1b95d0c0e68ddd1a9c11529d32ca9480c8d23b2a2d3",
+  "omarchy_recipe_url": "https://github.com/omacom/omarchy-pkgs/tree/c8a524abb172b5f92e89da839907d133cced4baf/pkgbuilds/linux-omarchy-aarch64"
+}

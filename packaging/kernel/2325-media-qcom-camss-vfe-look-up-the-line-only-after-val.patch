@@ -1,0 +1,55 @@
+From 903c2474590ab03de55bcaf4c6ad46970095489d Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Tue, 13 Oct 2026 20:41:23 -0400
+Subject: [PATCH 2325/2368] media: qcom: camss: vfe: look up the line only
+ after validating the write master
+
+vfe_buf_done() computed &vfe->line[vfe->wm_output_map[wm]] before checking
+whether the write master is mapped. When a buffer-done interrupt arrives
+for an unmapped master, which happens on stream stop, the map entry is
+VFE_LINE_NONE (-1) and UBSAN reports an out-of-bounds index on the line
+array, followed by the existing "Received wm done for unmapped index"
+message:
+
+  UBSAN: array-index-out-of-bounds in drivers/media/platform/qcom/camss/camss-vfe.c:452:36
+  index -1 is out of range for type 'vfe_line [4]'
+  Call trace:
+   vfe_buf_done+0x2a4/0x340 [qcom_camss]
+   camss_buf_done+0x4c/0xa0 [qcom_camss]
+   csid_isr+0x288/0x6a8 [qcom_camss]
+
+Only the address was computed, not dereferenced, so there was no memory
+access, but it is undefined behaviour. Take the line pointer after the
+check and reuse it for the output lookup.
+
+Seen on x1e80100 (Surface Pro 11) with CONFIG_UBSAN_BOUNDS.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 1ab35e6ada8337878d9a08684238a42da09bbbbe)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 55c0a0ee398fe8e07f9002fa500891ef3e24d661..c2a15247a7113ff73a91141aed8f11822527f206 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -449,10 +449,10 @@ u32 vfe_hw_version(struct vfe_device *vfe)
+  */
+ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ {
+-	struct vfe_line *line = &vfe->line[vfe->wm_output_map[wm]];
+ 	const struct vfe_hw_ops *ops = vfe->res->hw_ops;
+ 	struct camss_buffer *ready_buf;
+ 	struct vfe_output *output;
++	struct vfe_line *line;
+ 	unsigned long flags;
+ 	u32 index;
+ 	u64 ts = ktime_get_ns();
+@@ -464,7 +464,8 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 				    "Received wm done for unmapped index\n");
+ 		goto out_unlock;
+ 	}
+-	output = &vfe->line[vfe->wm_output_map[wm]].output;
++	line = &vfe->line[vfe->wm_output_map[wm]];
++	output = &line->output;
+ 
+ 	ready_buf = output->buf[0];
+ 	if (!ready_buf) {

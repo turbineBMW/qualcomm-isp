@@ -1,0 +1,44 @@
+pkgname=qualcomm-isp-runtime
+pkgver=0.1
+pkgrel=4
+pkgdesc='Experimental Qualcomm ISP camera runtime with explicit board profiles'
+arch=('aarch64')
+license=('MIT')
+depends=('python' 'python-numpy' 'python-gobject' 'gstreamer' 'gst-plugins-base'
+         'pipewire' 'wireplumber' 'v4l-utils' 'kmod' 'util-linux' 'qualcomm-isp-libcamera')
+makedepends=('pkgconf' 'gcc' 'libpipewire')
+backup=('etc/qualcomm-isp/config.json')
+source=('qualcomm-isp-runtime.tar.gz')
+sha256sums=('111937d9f413bd085ecb7dfc113a82dc92cfc6a5ff9df41e433a35a932d9512e')
+options=('!debug')
+build() {
+  cd qualcomm-isp
+  cc -O3 -fPIC -shared -Wall -Wextra runtime/pd10-fast.c -o runtime/pd10-fast.so
+  python tools/build-pipewire.py vendor/pipewire-gst bridge --version 1.6.9-icp-recovery-timestamps
+}
+check() {
+  cd qualcomm-isp/runtime
+  python -I test-ipe-handoff.py
+  python -I test-ipe-workerd.py
+  python -I test-ipe-capture-lease.py
+  python -I test-pd10-fast.py
+}
+package() {
+  cd qualcomm-isp
+  install -dm755 "$pkgdir/usr/lib/qualcomm-isp"
+  for f in runtime/*.py; do
+    [[ $(basename "$f") == test-* ]] && continue
+    install -m644 "$f" "$pkgdir/usr/lib/qualcomm-isp/"
+  done
+  install -m755 runtime/pd10-fast.so bridge/libgstpipewire.so "$pkgdir/usr/lib/qualcomm-isp/"
+  install -Dm644 profiles/surface-pro-11-denali-oled.json "$pkgdir/usr/share/qualcomm-isp/profiles/surface-pro-11-denali-oled.json"
+  install -Dm644 packaging/config.json "$pkgdir/etc/qualcomm-isp/config.json"
+  for f in systemd/qualcomm-isp-worker.* systemd/qualcomm-isp-sleep.service; do
+    install -Dm644 "$f" "$pkgdir/usr/lib/systemd/system/$(basename "$f")"
+  done
+  install -Dm644 systemd/qualcomm-isp-publisher.service "$pkgdir/usr/lib/systemd/user/qualcomm-isp-publisher.service"
+  install -Dm644 LICENSES/MIT.txt "$pkgdir/usr/share/licenses/$pkgname/MIT.txt"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 vendor/pipewire-gst/COPYING "$pkgdir/usr/share/licenses/$pkgname/pipewire-COPYING"
+  install -Dm644 docs/PROVENANCE.md "$pkgdir/usr/share/doc/qualcomm-isp/PROVENANCE.md"
+}

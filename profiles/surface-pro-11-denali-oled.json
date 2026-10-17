@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "surface-pro-11-denali-oled",
+  "compatible": "microsoft,denali-oled",
+  "camera": "/base/soc@0/cci@ac16000/i2c-bus@1/camera@1a",
+  "sensor_entity_prefix": "imx681 ",
+  "width": 3840,
+  "height": 2160,
+  "padded_height": 2176,
+  "firmware": "qcom/x1e80100/microsoft/Denali/CAMERA_ICP.mbn",
+  "icp_device": "ac01000.icp",
+  "node_name": "sp11-ipe-preview",
+  "description": "Built-in Front Camera",
+  "raw_node_name": "libcamera_input._base_soc_0_cci_ac16000_i2c-bus_1_camera_1a",
+  "kernel_manifest": "/usr/share/doc/linux-omarchy-isp/build-artifacts.json",
+  "program_bank": "bank",
+  "ife_tuning": "ife.yaml",
+  "awb_reference": "awb-reference.json"
+}

@@ -1,0 +1,7 @@
+{
+  "profile": "/usr/share/qualcomm-isp/profiles/surface-pro-11-denali-oled.json",
+  "assets": "/var/lib/qualcomm-isp/assets/surface-pro-11-denali-oled",
+  "cam": "/usr/lib/qualcomm-isp/libcamera/bin/cam",
+  "bridge": "/usr/lib/qualcomm-isp/libgstpipewire.so",
+  "cam_library_path": "/usr/lib/qualcomm-isp/libcamera/lib"
+}

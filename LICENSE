@@ -1,0 +1,17 @@
+Qualcomm ISP on Omarchy — licensing
+
+Original standalone runtime, tools, profiles and project documentation:
+Copyright (c) 2026 Brandon Williams <turbine.bmw@gmail.com>
+Licensed under the MIT license; see LICENSES/MIT.txt.
+
+This is a collection of components with separate licenses:
+- Kernel patch collection: GPL-2.0-only; existing per-file notices, dual-license
+  choices and syscall exceptions remain in the patches and upstream sources.
+- Omarchy packaging and documentation: MIT; see packaging/kernel/COPYING.omarchy.
+- libcamera changes: GPL-2.0-or-later for cam, LGPL-2.1-or-later for the core
+  pipeline. Upstream source retains its COPYING.rst, LICENSES and file notices.
+- PipeWire GStreamer bridge: MIT; see vendor/pipewire-gst/COPYING and file notices.
+
+MIT does not apply to the kernel or libcamera patches or to external firmware,
+program banks or extracted tuning data. Those external inputs are not included.
+See docs/PROVENANCE.md and REUSE.toml for the source boundaries.

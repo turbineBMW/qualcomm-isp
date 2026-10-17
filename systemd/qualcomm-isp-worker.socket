@@ -1,0 +1,14 @@
+[Unit]
+ConditionPathExists=/etc/qualcomm-isp/config.json
+ConditionPathExists=/usr/share/doc/linux-omarchy-isp/build-artifacts.json
+Description=Qualcomm ISP camera worker control socket
+ConditionFirmware=device-tree-compatible(microsoft,denali-oled)
+
+[Socket]
+ListenSequentialPacket=/run/qualcomm-isp/control
+SocketMode=0660
+SocketGroup=video
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

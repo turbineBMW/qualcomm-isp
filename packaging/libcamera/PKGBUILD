@@ -1,0 +1,33 @@
+pkgname=qualcomm-isp-libcamera
+pkgver=0.7.2
+pkgrel=3
+pkgdesc='Private libcamera capture tool for the experimental Qualcomm ISP runtime'
+arch=('aarch64')
+license=('LGPL-2.1-or-later' 'GPL-2.0-or-later' 'Apache-2.0' 'CC0-1.0')
+depends=('glibc' 'gcc-libs' 'gnutls' 'libelf' 'libevent' 'libyaml' 'libtiff' 'libunwind' 'systemd-libs' 'libyuv' 'libglvnd')
+makedepends=('meson' 'ninja' 'python-jinja' 'python-ply' 'python-pyyaml' 'pkgconf')
+_commit=aeae1f0c7155ae2a175f27b571496f87943197f9
+source=("libcamera-${_commit}.tar.gz::https://github.com/turbineBMW/libcamera/archive/${_commit}.tar.gz"
+        'libcamera-working.patch')
+sha256sums=('a8d3b2c225d4c2b87a9b8149c6e34ab0943e3df67232c8879aedfb397e9a52cd'
+            '8af163523d042301f4b0ff153ab98a8010421547aecda129a55d871c8e400bff')
+options=('!debug')
+prepare() {
+  mv "libcamera-${_commit}" libcamera
+  cd libcamera
+  patch -Np1 -i ../libcamera-working.patch
+}
+build() {
+  meson setup --reconfigure libcamera build --prefix=/usr/lib/qualcomm-isp/libcamera --libdir=lib \
+    --buildtype=release -Dpipelines=camss,simple,uvcvideo -Dipas=soft -Dv4l2=disabled \
+    -Dgstreamer=disabled -Dcam=enabled -Dqcam=disabled -Dlc-compliance=disabled \
+    -Dpycamera=disabled -Ddocumentation=disabled -Dtest=false -Dtracing=disabled \
+    -Dcam-output-kms=disabled -Dcam-output-sdl2=disabled -Dcam-jpeg=disabled \
+    -Dwerror=false -Dc_link_args= -Dcpp_link_args=
+  meson compile -C build -j 8
+}
+package() {
+  DESTDIR="$pkgdir" meson install -C build --no-rebuild
+  install -Dm644 libcamera/COPYING.rst "$pkgdir/usr/share/licenses/$pkgname/COPYING.rst"
+  cp -a libcamera/LICENSES "$pkgdir/usr/share/licenses/$pkgname/"
+}

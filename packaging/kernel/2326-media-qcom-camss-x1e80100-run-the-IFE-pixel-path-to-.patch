@@ -1,0 +1,501 @@
+From ad8945c821789b23835f0dc0d59145869bcb5a75 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Tue, 13 Oct 2026 20:56:22 -0400
+Subject: [PATCH 2326/2368] media: qcom: camss: x1e80100: run the IFE pixel
+ path to NV12 on the PIX line
+
+The x1e80100 PIX line so far only passed raw data through, like the RDI
+lines. Route it through the hardware instead: the CSID programs its pixel
+path (IPP) for the line, decoding the Bayer payload and feeding the IFE's
+image processing pipeline, and the VFE writes the FULL output as NV12
+through the luma and chroma write masters (bus clients 0 and 1), line
+based, with the chroma plane at half height. Buffer done for the pair
+arrives from the CSID as composite group 0, reg-update uses the IPP bits
+of the RUP/AUP command, and the IPP interrupt register set reports RUP
+done. The PIX line's source pad offers YUYV8_1_5X8 next to raw
+passthrough for 10-bit Bayer input, and the PIX video node gains NV12.
+
+The image processing modules themselves are not programmed yet and stay
+at their reset state, so the first frames are expected to carry the
+unprocessed mosaic in the luma plane. That is enough to prove the path
+end to end; module programming follows separately.
+
+Offsets and bit positions come from Qualcomm's GPL camera-kernel tree
+(cam_ife_csid680.h, cam_vfe680.h, cam_vfe_bus_ver3.c).
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 0c3230c4f60bbe7e9c4c094515fa6f5910abd8df)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-680.c b/drivers/media/platform/qcom/camss/camss-csid-680.c
+index 266acc17d7354057fccdb8cb363338dfde1f76bb..e7b56646d1b9ae5ace0f38f54a39f0fe86c4cb1a 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-680.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-680.c
+@@ -12,6 +12,7 @@
+ #include "camss.h"
+ #include "camss-csid.h"
+ #include "camss-csid-gen2.h"
++#include "camss-vfe.h"
+ 
+ /*
+  * csid_reg_write - Write a CSID register, logging it under dynamic debug
+@@ -157,6 +158,33 @@ static inline void csid_wrapper_write(struct csid_device *csid, u32 reg,
+ #define CSID_CSI2_RX_STATS_ECC					0x244
+ #define CSID_CSI2_RX_CRC_ERRORS					0x248
+ 
++/*
++ * Pixel path (IPP): the CSID path that feeds the IFE's image processing
++ * pipeline instead of dumping raw data. Same cfg0 bit layout as the RDI
++ * paths, a different cfg1 layout, its own IRQ register set, and buffer done
++ * reported on composite group 0 of the IFE bus.
++ */
++#define CSID_IPP_IRQ_STATUS					0xac
++#define CSID_IPP_IRQ_MASK					0xb0
++#define CSID_IPP_IRQ_CLEAR					0xb4
++#define		CSID_IPP_IRQ_RUP_DONE				BIT(23)
++#define CSID_IPP_CFG0						0x300
++#define CSID_IPP_CTRL						0x304
++#define		CSID_IPP_CTRL_RESUME_AT_FRAME_BOUNDARY		BIT(0)
++#define CSID_IPP_CFG1						0x310
++#define		IPP_CFG1_TIMESTAMP_STB_FRAME			BIT(1)
++#define		IPP_CFG1_TIMESTAMP_EN				BIT(9)
++#define		IPP_CFG1_PIX_STORE_EN				BIT(14)
++#define CSID_IPP_ERR_RECOVERY_CFG0				0x318
++#define		IPP_ERR_RECOVERY_OVERFLOW_CTRL			(BIT(0) | BIT(3))
++#define CSID_IPP_FRM_DROP_PERIOD				0x378
++#define CSID_IPP_IRQ_SUBSAMPLE_PATTERN				0x37c
++#define CSID_IPP_IRQ_SUBSAMPLE_PERIOD				0x380
++#define		CSID_IPP_REG_UPDATE				(BIT(0) | BIT(16))
++#define		BUF_DONE_IRQ_STATUS_IPP				BIT(0)
++/* The IFE PIX line hangs off the fourth CSID source stream */
++#define CSID_IPP_PORT						VFE_LINE_PIX
++
+ #define CSID_RDI_CFG0(rdi)					(0x500 + 0x100 * (rdi))
+ #define		RDI_CFG0_DECODE_FORMAT				12
+ #define		RDI_CFG0_DATA_TYPE				16
+@@ -193,21 +221,29 @@ static inline void csid_wrapper_write(struct csid_device *csid, u32 reg,
+ #define CSID_RDI_LINE_DROP_PATTERN(rdi)				(0x560 + 0x100 * (rdi))
+ #define CSID_RDI_LINE_DROP_PERIOD(rdi)				(0x564 + 0x100 * (rdi))
+ 
+-static inline int reg_update_rdi(struct csid_device *csid, int n)
++static inline bool csid_port_is_ipp(struct csid_device *csid, int port)
+ {
+-	return BIT(4 + n) + BIT(20 + n);
++	return !csid_is_lite(csid) && port == CSID_IPP_PORT;
++}
++
++static inline u32 reg_update_mask(struct csid_device *csid, int n)
++{
++	if (csid_port_is_ipp(csid, n))
++		return CSID_IPP_REG_UPDATE;
++
++	return BIT(4 + n) | BIT(20 + n);
+ }
+ 
+ static void csid_reg_update(struct csid_device *csid, int port_id)
+ {
+-	csid->reg_update |= reg_update_rdi(csid, port_id);
++	csid->reg_update |= reg_update_mask(csid, port_id);
+ 	csid_reg_write(csid, CSID_REG_UPDATE_CMD, csid->reg_update);
+ }
+ 
+ static inline void csid_reg_update_clear(struct csid_device *csid,
+ 					 int port_id)
+ {
+-	csid->reg_update &= ~reg_update_rdi(csid, port_id);
++	csid->reg_update &= ~reg_update_mask(csid, port_id);
+ 	csid_reg_write(csid, CSID_REG_UPDATE_CMD, csid->reg_update);
+ }
+ 
+@@ -325,6 +361,59 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8
+ 	csid_reg_write(csid, CSID_RDI_CFG0(port), val);
+ }
+ 
++/*
++ * __csid_configure_ipp_stream - Program the pixel path for the IFE PIX line
++ * @csid: CSID device
++ * @enable: enable or disable the path
++ * @vc: virtual channel to decode
++ *
++ * Unlike the RDI paths the pixel path decodes the payload (10-bit Bayer to
++ * unpacked samples) and hands it to the IFE's image processing pipeline.
++ * Crop and drop stay disabled so the whole frame goes through.
++ */
++static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable, u8 vc)
++{
++	struct v4l2_mbus_framefmt *input_format =
++		&csid->fmt[MSM_CSID_PAD_FIRST_SRC + CSID_IPP_PORT];
++	const struct csid_format_info *format =
++		csid_get_fmt_entry(csid->res->formats->formats,
++				   csid->res->formats->nformats,
++				   input_format->code);
++	u8 dt_id = CSID_IPP_PORT & 0x03;
++	u32 val;
++
++	csid_reg_write(csid, CSID_IPP_FRM_DROP_PERIOD, 0);
++
++	val = format->decode_format << RDI_CFG0_DECODE_FORMAT;
++	val |= format->data_type << RDI_CFG0_DATA_TYPE;
++	val |= vc << RDI_CFG0_VIRTUAL_CHANNEL;
++	val |= dt_id << RDI_CFG0_DT_ID;
++	csid_reg_write(csid, CSID_IPP_CFG0, val);
++
++	val = IPP_CFG1_TIMESTAMP_STB_FRAME;
++	val |= IPP_CFG1_TIMESTAMP_EN;
++	val |= IPP_CFG1_PIX_STORE_EN;
++	csid_reg_write(csid, CSID_IPP_CFG1, val);
++
++	csid_reg_write(csid, CSID_IPP_IRQ_SUBSAMPLE_PERIOD, 0);
++	csid_reg_write(csid, CSID_IPP_IRQ_SUBSAMPLE_PATTERN, 1);
++	csid_reg_write(csid, CSID_IPP_ERR_RECOVERY_CFG0, IPP_ERR_RECOVERY_OVERFLOW_CTRL);
++	csid_reg_write(csid, CSID_IPP_CTRL, 0);
++
++	val = readl(csid->base + CSID_IPP_CFG0);
++	if (enable)
++		val |= RDI_CFG0_ENABLE;
++	else
++		val &= ~RDI_CFG0_ENABLE;
++	csid_reg_write(csid, CSID_IPP_CFG0, val);
++}
++
++static void __csid_ctrl_ipp(struct csid_device *csid, int enable)
++{
++	csid_reg_write(csid, CSID_IPP_CTRL,
++		       enable ? CSID_IPP_CTRL_RESUME_AT_FRAME_BOUNDARY : 0);
++}
++
+ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ {
+ 	int i;
+@@ -333,11 +422,19 @@ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ 
+ 	/* Loop through all enabled ports and configure a stream for each */
+ 	for (i = 0; i < MSM_CSID_MAX_SRC_STREAMS; i++) {
+-		if (csid->phy.en_vc & BIT(i)) {
+-			__csid_configure_rdi_stream(csid, enable, i, 0);
++		if (!(csid->phy.en_vc & BIT(i)))
++			continue;
++
++		if (csid_port_is_ipp(csid, i)) {
++			__csid_configure_ipp_stream(csid, enable, 0);
+ 			__csid_configure_rx(csid, &csid->phy, 0);
+-			__csid_ctrl_rdi(csid, enable, i);
++			__csid_ctrl_ipp(csid, enable);
++			continue;
+ 		}
++
++		__csid_configure_rdi_stream(csid, enable, i, 0);
++		__csid_configure_rx(csid, &csid->phy, 0);
++		__csid_ctrl_rdi(csid, enable, i);
+ 	}
+ }
+ 
+@@ -376,6 +473,9 @@ static int csid_reset(struct csid_device *csid)
+ 		csid_reg_write(csid, CSID_CSI2_RDIN_IRQ_MASK(i), CSID_CSI2_RDIN_RUP_DONE);
+ 	}
+ 
++	if (!csid_is_lite(csid))
++		csid_reg_write(csid, CSID_IPP_IRQ_MASK, CSID_IPP_IRQ_RUP_DONE);
++
+ 	/* Clear RDI status */
+ 	csid_reg_write(csid, CSID_BUF_DONE_IRQ_CLEAR, ~0u);
+ 
+@@ -420,6 +520,9 @@ static irqreturn_t csid_isr(int irq, void *dev)
+ 
+ 	/* Process state for each RDI channel */
+ 	for (i = 0; i < MSM_CSID_MAX_SRC_STREAMS; i++) {
++		if (csid_port_is_ipp(csid, i))
++			continue;
++
+ 		val = readl(csid->base + CSID_CSI2_RDIN_IRQ_STATUS(i));
+ 		if (val)
+ 			csid_reg_write(csid, CSID_CSI2_RDIN_IRQ_CLEAR(i), val);
+@@ -431,6 +534,18 @@ static irqreturn_t csid_isr(int irq, void *dev)
+ 			camss_buf_done(csid->camss, csid->id, i);
+ 	}
+ 
++	if (!csid_is_lite(csid)) {
++		val = readl(csid->base + CSID_IPP_IRQ_STATUS);
++		if (val)
++			csid_reg_write(csid, CSID_IPP_IRQ_CLEAR, val);
++
++		if (val & CSID_IPP_IRQ_RUP_DONE)
++			csid_rup_complete(csid, CSID_IPP_PORT);
++
++		if (buf_done_val & BUF_DONE_IRQ_STATUS_IPP)
++			camss_buf_done(csid->camss, csid->id, CSID_IPP_PORT);
++	}
++
+ 	/* Issue clear command */
+ 	csid_reg_write(csid, CSID_IRQ_CMD, CSID_IRQ_CMD_CLEAR);
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-680.c b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+index 36ee5994148a79077d2cbe2971e1314269ce2443..400bacf2bf669751922650112ebefe893eb520f8 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-680.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+@@ -73,6 +73,14 @@ static inline void vfe_reg_write(struct vfe_device *vfe, u32 reg, u32 val)
+ #define		VFE_BUS_MMU_PREFETCH_CFG_EN	BIT(0)
+ #define VFE_BUS_MMU_PREFETCH_MAX_OFFSET(vfe, c)	((vfe_is_lite(vfe) ? 0x464 : 0xe64) + (c) * 0x100)
+ #define VFE_BUS_ADDR_STATUS0(vfe, c)		((vfe_is_lite(vfe) ? 0x470 : 0xe70) + (c) * 0x100)
++#define VFE_BUS_BW_LIMITER(vfe, c)		((vfe_is_lite(vfe) ? 0x41c : 0xe1c) + (c) * 0x100)
++#define		VFE_BUS_BW_LIMITER_DEFAULT	0xf
++#define		VFE_BUS_PACKER_CFG_PLAIN8_LSB_MSB_10	0x3
++#define VFE_BUS_IMAGE_CFG0_LINE(h, w)		(((h) << 16) | (w))
++
++/* Pixel path FULL output: luma and chroma write masters of the full IFE */
++#define VFE_WM_FULL_Y				0
++#define VFE_WM_FULL_C				1
+ 
+ /*
+  * TODO: differentiate the port id based on requested type of RDI, BHIST etc
+@@ -167,9 +175,85 @@ static void vfe_wm_update(struct vfe_device *vfe, u8 rdi, u32 addr,
+ {
+ 	u8 wm = RDI_WM(rdi);
+ 
++	if (line->id == VFE_LINE_PIX) {
++		struct v4l2_pix_format_mplane *pix =
++			&line->video_out.active_fmt.fmt.pix_mp;
++		u32 luma_size = pix->plane_fmt[0].bytesperline * pix->height;
++
++		/* NV12 in one buffer: chroma plane follows the luma plane */
++		vfe_reg_write(vfe, VFE_BUS_IMAGE_ADDR(vfe, VFE_WM_FULL_Y), addr);
++		vfe_reg_write(vfe, VFE_BUS_IMAGE_ADDR(vfe, VFE_WM_FULL_C),
++			      addr + luma_size);
++		return;
++	}
++
+ 	vfe_reg_write(vfe, VFE_BUS_IMAGE_ADDR(vfe, wm), addr);
+ }
+ 
++/*
++ * vfe_pix_wm_start - Start the FULL output write masters of the pixel path
++ * @vfe: VFE device
++ * @line: the PIX line
++ *
++ * The pixel path writes NV12 through two line based write masters, luma on
++ * client 0 and chroma on client 1, the chroma plane being half the height.
++ * Buffer done for the pair is reported by the CSID as composite group 0.
++ */
++static void vfe_pix_wm_start(struct vfe_device *vfe, struct vfe_line *line)
++{
++	struct v4l2_pix_format_mplane *pix =
++		&line->video_out.active_fmt.fmt.pix_mp;
++	u32 stride = pix->plane_fmt[0].bytesperline;
++	u8 wm;
++
++	for (wm = VFE_WM_FULL_Y; wm <= VFE_WM_FULL_C; wm++) {
++		u32 height = wm == VFE_WM_FULL_C ? pix->height / 2 : pix->height;
++
++		vfe_reg_write(vfe, VFE_BUS_IMAGE_CFG0(vfe, wm),
++			      VFE_BUS_IMAGE_CFG0_LINE(height, pix->width));
++		vfe_reg_write(vfe, VFE_BUS_IMAGE_CFG1(vfe, wm), 0);
++		vfe_reg_write(vfe, VFE_BUS_IMAGE_CFG2(vfe, wm), stride);
++		vfe_reg_write(vfe, VFE_BUS_PACKER_CFG(vfe, wm),
++			      VFE_BUS_PACKER_CFG_PLAIN8_LSB_MSB_10);
++		vfe_reg_write(vfe, VFE_BUS_FRAME_INCR(vfe, wm), stride * height);
++		vfe_reg_write(vfe, VFE_BUS_BW_LIMITER(vfe, wm),
++			      VFE_BUS_BW_LIMITER_DEFAULT);
++
++		vfe_reg_write(vfe, VFE_BUS_MMU_PREFETCH_CFG(vfe, wm),
++			      VFE_BUS_MMU_PREFETCH_CFG_EN);
++		vfe_reg_write(vfe, VFE_BUS_MMU_PREFETCH_MAX_OFFSET(vfe, wm), ~0u);
++
++		/* no dropped frames, one irq per frame */
++		vfe_reg_write(vfe, VFE_BUS_FRAMEDROP_PATTERN(vfe, wm), 1);
++		vfe_reg_write(vfe, VFE_BUS_FRAMEDROP_PERIOD(vfe, wm), 0);
++		vfe_reg_write(vfe, VFE_BUS_IRQ_SUBSAMPLE_PATTERN(vfe, wm), 1);
++		vfe_reg_write(vfe, VFE_BUS_IRQ_SUBSAMPLE_PERIOD(vfe, wm), 0);
++	}
++
++	/*
++	 * The IFE's image processing modules are left at their reset state
++	 * for now. Log what the top block reports so the pixel path bring-up
++	 * can be compared against a known-good programming sequence.
++	 */
++	dev_dbg(vfe->camss->dev,
++		"PIX top: version 0x%08x cap 0x%08x lens 0x%08x stats 0x%08x color 0x%08x zoom 0x%08x core_cfg 0x%08x 0x%08x 0x%08x 0x%08x\n",
++		readl(vfe->base + 0x0), readl(vfe->base + 0x4),
++		readl(vfe->base + 0x8), readl(vfe->base + 0xc),
++		readl(vfe->base + 0x10), readl(vfe->base + 0x14),
++		readl(vfe->base + 0x24), readl(vfe->base + 0x28),
++		readl(vfe->base + 0x2c), readl(vfe->base + 0x68));
++
++	/* Buffer done comes through the CSID; VFE IRQs stay off */
++	vfe_disable_irq(vfe);
++
++	for (wm = VFE_WM_FULL_Y; wm <= VFE_WM_FULL_C; wm++)
++		vfe_reg_write(vfe, VFE_BUS_WRITE_CLIENT_CFG(vfe, wm),
++			      VFE_BUS_WRITE_CLIENT_CFG_EN);
++
++	dev_dbg(vfe->camss->dev, "PIX WM:%d,%d width %d height %d stride %d\n",
++		VFE_WM_FULL_Y, VFE_WM_FULL_C, pix->width, pix->height, stride);
++}
++
+ static void vfe_wm_start(struct vfe_device *vfe, u8 rdi, struct vfe_line *line)
+ {
+ 	struct v4l2_pix_format_mplane *pix =
+@@ -178,6 +262,11 @@ static void vfe_wm_start(struct vfe_device *vfe, u8 rdi, struct vfe_line *line)
+ 	u32 cfg;
+ 	u8 wm;
+ 
++	if (line->id == VFE_LINE_PIX) {
++		vfe_pix_wm_start(vfe, line);
++		return;
++	}
++
+ 	cfg = VFE_BUS_IMAGE_CFG0_DATA(pix->height, stride);
+ 	wm = RDI_WM(rdi);
+ 
+@@ -216,6 +305,12 @@ static void vfe_wm_stop(struct vfe_device *vfe, u8 rdi)
+ {
+ 	u8 wm = RDI_WM(rdi);
+ 
++	if (rdi == VFE_LINE_PIX && !vfe_is_lite(vfe)) {
++		vfe_reg_write(vfe, VFE_BUS_WRITE_CLIENT_CFG(vfe, VFE_WM_FULL_Y), 0);
++		vfe_reg_write(vfe, VFE_BUS_WRITE_CLIENT_CFG(vfe, VFE_WM_FULL_C), 0);
++		return;
++	}
++
+ 	vfe_reg_write(vfe, VFE_BUS_WRITE_CLIENT_CFG(vfe, wm), 0);
+ }
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index c2a15247a7113ff73a91141aed8f11822527f206..0921d1a3eebeedd8107c18e486006fcaca7cdd87 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -252,6 +252,63 @@ static const struct camss_format_info formats_pix_8x96[] = {
+ 	  PER_PLANE_DATA(0, 1, 1, 1, 1, 16) },
+ };
+ 
++/*
++ * x1e80100 PIX line: NV12 written by the IFE pixel path (FULL output), and
++ * the same raw passthrough formats as the RDI lines.
++ */
++static const struct camss_format_info formats_pix_x1e80100[] = {
++	{ MEDIA_BUS_FMT_YUYV8_1_5X8, 8, V4L2_PIX_FMT_NV12, 1,
++	  PER_PLANE_DATA(0, 1, 1, 2, 3, 8) },
++	{ MEDIA_BUS_FMT_UYVY8_1X16, 8, V4L2_PIX_FMT_UYVY, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 16) },
++	{ MEDIA_BUS_FMT_VYUY8_1X16, 8, V4L2_PIX_FMT_VYUY, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 16) },
++	{ MEDIA_BUS_FMT_YUYV8_1X16, 8, V4L2_PIX_FMT_YUYV, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 16) },
++	{ MEDIA_BUS_FMT_YVYU8_1X16, 8, V4L2_PIX_FMT_YVYU, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 16) },
++	{ MEDIA_BUS_FMT_SBGGR8_1X8, 8, V4L2_PIX_FMT_SBGGR8, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 8) },
++	{ MEDIA_BUS_FMT_SGBRG8_1X8, 8, V4L2_PIX_FMT_SGBRG8, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 8) },
++	{ MEDIA_BUS_FMT_SGRBG8_1X8, 8, V4L2_PIX_FMT_SGRBG8, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 8) },
++	{ MEDIA_BUS_FMT_SRGGB8_1X8, 8, V4L2_PIX_FMT_SRGGB8, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 8) },
++	{ MEDIA_BUS_FMT_SBGGR10_1X10, 10, V4L2_PIX_FMT_SBGGR10P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
++	{ MEDIA_BUS_FMT_SGBRG10_1X10, 10, V4L2_PIX_FMT_SGBRG10P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
++	{ MEDIA_BUS_FMT_SGRBG10_1X10, 10, V4L2_PIX_FMT_SGRBG10P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
++	{ MEDIA_BUS_FMT_SRGGB10_1X10, 10, V4L2_PIX_FMT_SRGGB10P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
++	{ MEDIA_BUS_FMT_SBGGR10_2X8_PADHI_LE, 16, V4L2_PIX_FMT_SBGGR10, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 16) },
++	{ MEDIA_BUS_FMT_SBGGR12_1X12, 12, V4L2_PIX_FMT_SBGGR12P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 12) },
++	{ MEDIA_BUS_FMT_SGBRG12_1X12, 12, V4L2_PIX_FMT_SGBRG12P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 12) },
++	{ MEDIA_BUS_FMT_SGRBG12_1X12, 12, V4L2_PIX_FMT_SGRBG12P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 12) },
++	{ MEDIA_BUS_FMT_SRGGB12_1X12, 12, V4L2_PIX_FMT_SRGGB12P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 12) },
++	{ MEDIA_BUS_FMT_SBGGR14_1X14, 14, V4L2_PIX_FMT_SBGGR14P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 14) },
++	{ MEDIA_BUS_FMT_SGBRG14_1X14, 14, V4L2_PIX_FMT_SGBRG14P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 14) },
++	{ MEDIA_BUS_FMT_SGRBG14_1X14, 14, V4L2_PIX_FMT_SGRBG14P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 14) },
++	{ MEDIA_BUS_FMT_SRGGB14_1X14, 14, V4L2_PIX_FMT_SRGGB14P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 14) },
++	{ MEDIA_BUS_FMT_Y8_1X8, 8, V4L2_PIX_FMT_GREY, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 8) },
++	{ MEDIA_BUS_FMT_Y10_1X10, 10, V4L2_PIX_FMT_Y10P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
++	{ MEDIA_BUS_FMT_Y10_2X8_PADHI_LE, 16, V4L2_PIX_FMT_Y10, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 16) },
++};
++
+ const struct camss_formats vfe_formats_rdi_8x16 = {
+ 	.nformats = ARRAY_SIZE(formats_rdi_8x16),
+ 	.formats = formats_rdi_8x16
+@@ -283,6 +340,11 @@ const struct camss_formats vfe_formats_pix_845 = {
+ 	.formats = formats_rdi_845
+ };
+ 
++const struct camss_formats vfe_formats_pix_x1e80100 = {
++	.nformats = ARRAY_SIZE(formats_pix_x1e80100),
++	.formats = formats_pix_x1e80100
++};
++
+ static u32 vfe_src_pad_code(struct vfe_line *line, u32 sink_code,
+ 			    unsigned int index, u32 src_req_code)
+ {
+@@ -407,6 +469,26 @@ static u32 vfe_src_pad_code(struct vfe_line *line, u32 sink_code,
+ 			return camss_format_find_code(src_code, ARRAY_SIZE(src_code),
+ 						      index, src_req_code);
+ 		}
++		case MEDIA_BUS_FMT_SBGGR10_1X10:
++		case MEDIA_BUS_FMT_SGBRG10_1X10:
++		case MEDIA_BUS_FMT_SGRBG10_1X10:
++		case MEDIA_BUS_FMT_SRGGB10_1X10:
++			/*
++			 * The x1e80100 PIX line can run the IFE pixel path on
++			 * Bayer input and write NV12; raw passthrough stays
++			 * the first choice.
++			 */
++			if (line->id == VFE_LINE_PIX &&
++			    vfe->camss->res->version == CAMSS_X1E80100) {
++				u32 src_code[] = {
++					sink_code,
++					MEDIA_BUS_FMT_YUYV8_1_5X8,
++				};
++
++				return camss_format_find_code(src_code, ARRAY_SIZE(src_code),
++							      index, src_req_code);
++			}
++			fallthrough;
+ 		default:
+ 			if (index > 0)
+ 				return 0;
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index ae9dad353a3783cc0c9945e58167573b48441067..bbc9683459c6205453b74df0b483fb9d4672ed85 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -240,6 +240,7 @@ extern const struct camss_formats vfe_formats_rdi_8x96;
+ extern const struct camss_formats vfe_formats_pix_8x96;
+ extern const struct camss_formats vfe_formats_rdi_845;
+ extern const struct camss_formats vfe_formats_pix_845;
++extern const struct camss_formats vfe_formats_pix_x1e80100;
+ 
+ extern const struct vfe_hw_ops vfe_ops_4_1;
+ extern const struct vfe_hw_ops vfe_ops_4_7;
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 9fb26b2f2ee6af5f2c626e57c9181c9173eeac71..908135ce6aa72200ce104d2225f8c9dc547fe2ae 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -4350,7 +4350,7 @@ static const struct camss_subdev_resources vfe_res_x1e80100[] = {
+ 			.pd_name = "ife0",
+ 			.hw_ops = &vfe_ops_680,
+ 			.formats_rdi = &vfe_formats_rdi_845,
+-			.formats_pix = &vfe_formats_pix_845
++			.formats_pix = &vfe_formats_pix_x1e80100
+ 		},
+ 	},
+ 	/* IFE1 */
+@@ -4374,7 +4374,7 @@ static const struct camss_subdev_resources vfe_res_x1e80100[] = {
+ 			.pd_name = "ife1",
+ 			.hw_ops = &vfe_ops_680,
+ 			.formats_rdi = &vfe_formats_rdi_845,
+-			.formats_pix = &vfe_formats_pix_845
++			.formats_pix = &vfe_formats_pix_x1e80100
+ 		},
+ 	},
+ 	/* IFE_LITE_0 */

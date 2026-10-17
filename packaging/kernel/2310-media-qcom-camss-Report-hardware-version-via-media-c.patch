@@ -1,0 +1,115 @@
+From 220874ff2b2f2c8f4eaa603fec0189b5a93660c1 Mon Sep 17 00:00:00 2001
+From: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Date: Fri, 31 Jul 2026 10:54:37 +0200
+Subject: [PATCH 2310/2368] media: qcom: camss: Report hardware version via
+ media controller
+
+Populate media_dev.hw_revision with the top-level CAMSS hardware version
+so that user space can query the exact hardware variant through the media
+controller (e.g. via media-ctl or MEDIA_IOC_DEVICE_INFO). This can help
+identify the platform variant and adapt behaviour accordingly, for example
+allowing libcamera to apply quirks or enable features that cannot be
+discovered through standard V4L2 or media-controller APIs.
+
+The version register is exposed by some platforms through the top-level
+"top" reg region (offset 0). When present, map it and read the version
+once at probe. This is a no-op on platforms not mapping the region (yet).
+
+Reported media info on Agatti/CM2290 (Spectra 520):
+Media Driver Info:
+        Driver name      : qcom-camss
+        Model            : Qualcomm Camera Subsystem
+        Bus info         : platform:5c11000.camss
+        Hardware revision: 0x00050200 (328192)
+
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Signed-off-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
+(cherry picked from commit da70645cdfbb3c0a2f93c30c2b418fe83c82228c)
+(cherry picked from commit 39a1501aa1d17cf84fd190be4b82654b46f9dca5)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index c00cb7e00dc0b7323ab0e844c213c25229d8e6c2..3f8ec6c1ae65ed2a33ebeea81f031e2ca82c582f 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -33,6 +33,9 @@
+ #define CAMSS_CLOCK_MARGIN_NUMERATOR 105
+ #define CAMSS_CLOCK_MARGIN_DENOMINATOR 100
+ 
++/* Top-level CAMSS version register */
++#define CAMSS_HW_VERSION		0x0
++
+ static const struct parent_dev_ops vfe_parent_dev_ops;
+ 
+ static const struct camss_subdev_resources csiphy_res_8x16[] = {
+@@ -4682,6 +4685,29 @@ void camss_pm_domain_off(struct camss *camss, int id)
+ 	}
+ }
+ 
++static int camss_read_version(struct camss *camss)
++{
++	u32 hw_version;
++	int ret;
++
++	if (!camss->top_base)
++		return 0;
++
++	ret = pm_runtime_resume_and_get(camss->dev);
++	if (ret < 0)
++		return ret;
++
++	hw_version = readl_relaxed(camss->top_base + CAMSS_HW_VERSION);
++
++	pm_runtime_put_sync(camss->dev);
++
++	dev_dbg(camss->dev, "CAMSS HW Version = 0x%08x\n", hw_version);
++
++	camss->media_dev.hw_revision = hw_version;
++
++	return 0;
++}
++
+ static int vfe_parent_dev_ops_get(struct camss *camss, int id)
+ {
+ 	int ret = -EINVAL;
+@@ -4862,6 +4888,16 @@ static int camss_init_subdevices(struct camss *camss)
+ 		camss->csid_wrapper_base = base;
+ 	}
+ 
++	/* Optional top register for hardware version info */
++	if (platform_get_resource_byname(pdev, IORESOURCE_MEM, "top")) {
++		void __iomem *base;
++
++		base = devm_platform_ioremap_resource_byname(pdev, "top");
++		if (IS_ERR(base))
++			return PTR_ERR(base);
++		camss->top_base = base;
++	}
++
+ 	for (i = 0; i < camss->res->csid_num; i++) {
+ 		ret = msm_csid_subdev_init(camss, &camss->csid[i],
+ 					   &res->csid_res[i], i);
+@@ -5455,6 +5491,10 @@ static int camss_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_v4l2_device_unregister;
+ 
++	ret = camss_read_version(camss);
++	if (ret)
++		goto err_v4l2_device_unregister;
++
+ 	ret = camss_parse_ports(camss);
+ 	if (ret < 0)
+ 		goto err_v4l2_device_unregister;
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index fe5fe25d5f18d8a3ce35b48077a975f1453c341f..cce79e56f58c8bdc0097f4a1702df22c4248f2fa 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -133,6 +133,7 @@ struct camss {
+ 	struct ispif_device *ispif;
+ 	struct vfe_device *vfe;
+ 	void __iomem *csid_wrapper_base;
++	void __iomem *top_base;
+ 	atomic_t ref_count;
+ 	int genpd_num;
+ 	struct device *genpd;

@@ -1,0 +1,18 @@
+[Unit]
+ConditionPathExists=/etc/qualcomm-isp/config.json
+ConditionPathExists=/usr/share/doc/linux-omarchy-isp/build-artifacts.json
+Description=Stop the Qualcomm ISP camera before sleep and restore it after wake
+ConditionFirmware=device-tree-compatible(microsoft,denali-oled)
+Before=sleep.target
+StopWhenUnneeded=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 -I /usr/lib/qualcomm-isp/sleep.py prepare
+ExecStopPost=/usr/bin/python3 -I /usr/lib/qualcomm-isp/sleep.py restore
+TimeoutStartSec=90
+TimeoutStopSec=90
+
+[Install]
+RequiredBy=sleep.target

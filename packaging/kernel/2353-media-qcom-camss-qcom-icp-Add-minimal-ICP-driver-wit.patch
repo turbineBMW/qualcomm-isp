@@ -1,0 +1,1243 @@
+From d16f0310ea406bed832061658d225964c30c805f Mon Sep 17 00:00:00 2001
+From: Bryan O'Donoghue <bod@kernel.org>
+Date: Fri, 3 Jul 2026 12:27:58 +0100
+Subject: [PATCH 2353/2368] media: qcom: camss: qcom-icp: Add minimal ICP
+ driver with HFI infrastrucutre
+
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
+(cherry picked from commit 63514548c205d2605589a9789c27343506074acd)
+(cherry picked from commit 91e39be7e55c20a409c85438c4072c41c88bdd87)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.h b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..a63a0395c0f1751799562c71a87e9c8d488566bf
+--- /dev/null
++++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
+@@ -0,0 +1,534 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Qualcomm CAMSS ICP HFI Protocol Definitions
++ *
++ * Copyright (c) 2025 Linaro Ltd.
++ */
++
++#ifndef __CAMSS_ICP_HFI_H__
++#define __CAMSS_ICP_HFI_H__
++
++#include <linux/types.h>
++
++#define HFI_QTBL_VERSION			0xFFFFFFFF
++
++/* ICP firmware boot command/response */
++#define ICP_INIT_REQUEST_RESET			0x0
++#define ICP_INIT_REQUEST_SET			0x01
++
++#define ICP_INIT_RESP_RESET			0x00
++#define ICP_INIT_RESP_SUCCESS			0x01
++#define	ICP_INIT_RESP_FAILED			0x02
++
++/* Command / Response groups */
++#define HFI_CMD_GRP_ICP				0
++#define HFI_CMD_GRP_IPE_BPS			BIT(24)
++#define HFI_CMD_GRP_CDM				BIT(25)
++#define HFI_CMD_GRP_DBG				(BIT(24) | BIT(25))
++
++/* Command / Response offsets */
++#define HFI_CMD_BASE				BIT(16)
++#define HFI_RSP_BASE				BIT(17)
++
++/* System Commands */
++#define HFI_CMD_SYS_INIT			0x10001
++#define HFI_CMD_SYS_PC_PREP			0x10002
++#define HFI_CMD_SYS_SET_PROPERTY		0x10003
++#define HFI_CMD_SYS_GET_PROPERTY		0x10004
++#define HFI_CMD_SYS_PING			0x10005
++#define HFI_CMD_SYS_RESET			0x10006
++
++/* ICP Firmware result codes */
++#define CAMERAICP_OK				0x00
++#define CAMERAICP_EFAILED			0x01
++#define CAMERAICP_ENOMEMORY			0x02
++#define CAMERAICP_EBADSTATE			0x03
++#define CAMERAICP_EBADPARM			0x04
++#define CAMERAICP_EBADITEM			0x05
++#define CAMERAICP_EINVALIDFORMAT		0x06
++#define CAMERAICP_EUNSUPPORTED			0x07
++#define CAMERAICP_EOUTOFBOUND			0x08
++#define CAMERAICP_ETIMEDOUT			0x09
++#define CAMERAICP_EABORTED			0x0a
++#define CAMERAICP_EHWVIOLATION			0x0b
++#define CAMERAICP_ECDMERROR			0x0c
++
++/* System Messages */
++#define HFI_MSG_ICP_COMMON_START		0x20000
++#define HFI_MSG_SYS_INIT_DONE			0x20001
++#define HFI_MSG_SYS_PC_PREP_DONE		0x20002
++#define HFI_MSG_SYS_DEBUG			0x20003
++#define HFI_MSG_SYS_IDLE			0x20004
++#define HFI_MSG_SYS_PROPERTY_INFO		0x20005
++#define HFI_MSG_SYS_PING_ACK			0x20006
++#define HFI_MSG_SYS_RESET_ACK			0x20007
++#define HFI_MSG_EVENT_NOTIFY			0x20008
++
++/* IPE/BPS Commands */
++#define HFI_CMD_IPEBPS_CREATE_HANDLE		0x1010008
++#define HFI_CMD_IPEBPS_ASYNC_COMMAND_DIRECT	0x101000a
++#define HFI_CMD_IPEBPS_ASYNC_COMMAND_INDIRECT	0x101000e
++
++/* IPE/BPS Messages */
++#define HFI_MSG_IPEBPS_CREATE_HANDLE_ACK	0x1020008
++#define HFI_MSG_IPEBPS_ASYNC_DIRECT_ACK		0x102000a
++#define HFI_MSG_IPEBPS_ASYNC_INDIRECT_ACK	0x102000e
++
++/* Opcodes */
++#define HFI_IPEBPS_CMD_OPCODE_BPS_CONFIG_IO	0x1
++#define HFI_IPEBPS_CMD_OPCODE_BPS_FRAME_PROCESS	0x2
++#define HFI_IPEBPS_CMD_OPCODE_BPS_ABORT		0x3
++#define HFI_IPEBPS_CMD_OPCODE_BPS_DESTROY	0x4
++
++#define HFI_IPEBPS_CMD_OPCODE_IPE_CONFIG_IO	0x5
++#define HFI_IPEBPS_CMD_OPCODE_IPE_FRAME_PROCESS	0x6
++#define HFI_IPEBPS_CMD_OPCODE_IPE_ABORT		0x7
++#define HFI_IPEBPS_CMD_OPCODE_IPE_DESTROY	0x8
++
++#define HFI_IPEBPS_CMD_OPCODE_BPS_WAIT_FOR_IPE	0x9
++#define HFI_IPEBPS_CMD_OPCODE_BPS_WAIT_FOR_BPS	0xa
++#define HFI_IPEBPS_CMD_OPCODE_IPE_WAIT_FOR_BPS	0xb
++#define HFI_IPEBPS_CMD_OPCODE_IPE_WAIT_FOR_IPE	0xc
++
++#define HFI_IPEBPS_CMD_OPCODE_MEM_MAP		0xe
++#define HFI_IPEBPS_CMD_OPCODE_MEM_UNMAP		0xf
++
++/* Device Types */
++#define HFI_DEV_TYPE_BPS			1
++#define HFI_DEV_TYPE_IPE_RT			2
++#define HFI_DEV_TYPE_IPE			3
++#define HFI_DEV_TYPE_IPE_SEMI_RT		4
++#define HFI_DEV_TYPE_BPS_RT			5
++#define HFI_DEV_TYPE_BPS_SEMI_RT		6
++
++/* Events */
++#define HFI_EVENT_SYS_ERROR			0x01
++#define HFI_EVENT_ICP_ERROR			0x02
++#define HFI_EVENT_IPE_BPS_ERROR			0x03
++#define HFI_EVENT_CDM_ERROR			0x04
++#define HFI_EVENT_DBG_ERROR			0x05
++
++/* Property Types */
++#define HFI_PROP_SYS_DEBUG_CFG			0x01
++#define HFI_PROP_SYS_UBWC_CFG			0x02
++#define HFI_PROP_SYS_IMAGE_VER			0x03
++#define HFI_PROP_SYS_SUPPORTED			0x04
++#define HFI_PROP_SYS_IPEBPS_PC			0x05
++
++/*
++ * Debug levels
++ */
++#define HFI_DEBUG_MSG_LOW			BIT(0)
++#define HFI_DEBUG_MSG_MEDIUM			BIT(1)
++#define HFI_DEBUG_MSG_HIGH			BIT(2)
++#define HFI_DEBUG_MSG_ERROR			BIT(3)
++#define HFI_DEBUG_MSG_FATAL			BIT(4)
++#define HFI_DEBUG_MSG_PERF			BIT(5)
++
++/*
++ * Debug output modes
++ */
++#define HFI_DEBUG_MODE_QUEUE			0x00000001
++#define HFI_DEBUG_MODE_QDSS			0x00000002
++
++/*
++ * Handle types for CREATE_HANDLE
++ */
++#define HFI_HANDLE_TYPE_BPS			1
++#define HFI_HANDLE_TYPE_IPE			2
++
++/*
++ * Queue indexes
++ */
++enum {
++	HFI_Q_CMD_TYPE = 0,
++	HFI_Q_MSG_TYPE,
++	HFI_Q_DBG_TYPE,
++	HFI_Q_MAX,
++};
++
++/* Memory Sizes */
++#define HFI_QTBL_SIZE				SZ_1M
++#define HFI_CMD_Q_SIZE				SZ_1M
++#define HFI_MSG_Q_SIZE				SZ_1M
++#define HFI_DBG_Q_SIZE				SZ_1M
++#define HFI_SFR_LOG_SIZE			SZ_4K
++
++#define HFI_CMD_Q_DATA_SIZE			SZ_4K
++#define HFI_MSG_Q_DATA_SIZE			SZ_4K
++#define HFI_DBG_Q_DATA_SIZE			102400
++
++#define HFI_SHMEM_SIZE				SZ_1M
++#define HFI_FWUNCACHED_SIZE			(7 * SZ_1M)
++#define HFI_QDSS_SIZE				SZ_1M
++#define HFI_QTBL_SIZE				SZ_1M
++#define HFI_Q_SIZE				SZ_1M
++#define HFI_SFR_SIZE				SZ_8K
++#define HFI_SECHEAP_SIZE			SZ_1M
++
++/*
++ * General Purpose registers
++ *
++ * GP registers start at CSR base + 0x20. CAMX defines them as:
++ *   GEN_PURPOSE_REG(n) = n * 4, relative to (CSR + 0x20)
++ *
++ * So GP0 = CSR+0x20, GP1 = CSR+0x24, GP2 = CSR+0x28, GP3 = CSR+0x2C, etc.
++ *
++ * Offsets below are absolute from CSR base for direct use with csr_base.
++ */
++#define HFI_REG_FW_VERSION			0x24  /* GP1 - firmware writes version */
++#define HFI_REG_HOST_ICP_INIT_REQ		0x28  /* GP2 - host signals init request */
++#define HFI_REG_ICP_HOST_INIT_RESP		0x2C  /* GP3 - firmware signals ready */
++#define HFI_REG_SHARED_MEM_PTR			0x30  /* GP4 - shared memory IOVA */
++#define HFI_REG_SHARED_MEM_SIZE			0x34  /* GP5 - shared memory size */
++#define HFI_REG_QTBL_PTR			0x38  /* GP6 - q table IOVA */
++#define HFI_REG_SECONDARY_HEAP_PTR		0x3C  /* GP7 - secondary heap IOVA */
++#define HFI_REG_SECONDARY_HEAP_SIZE		0x40  /* GP8 - secondary heap size */
++#define HFI_REG_RESERVED			0x44  /* GP9 - reserved/status */
++#define HFI_REG_SFR_PTR				0x48  /* GP10 - SFR buffer IOVA */
++#define HFI_REG_QDSS_IOVA			0x4C  /* GP11 - QDSS buffer IOVA */
++#define HFI_REG_QDSS_IOVA_SIZE			0x50  /* GP12 - QDSS buffer size */
++#define HFI_REG_IO_REGION_1_IOVA		0x54  /* GP13 - IO region 1 IOVA */
++#define HFI_REG_IO_REGION_1_SIZE		0x58  /* GP14 - IO region 1 size */
++#define HFI_REG_IO_REGION_2_IOVA		0x5C  /* GP15 - IO region 2 IOVA */
++#define HFI_REG_IO_REGION_2_SIZE		0x60  /* GP16 - IO region 2 size */
++#define HFI_REG_FWUNCACHED_IOVA			0x64  /* GP17 - FW uncached region IOVA */
++#define HFI_REG_FWUNCACHED_SIZE			0x68  /* GP18 - FW uncached region size */
++
++/* HFI constants */
++#define HFI_QUEUE_TABLE_VERSION			0xFFFFFFFF
++
++#define HFI_BYTE_WORD_SHIFT			0x02
++
++#define HFI_MAX_PROPS				16
++
++struct hfi_resources {
++	u32 shmem_size;
++	u32 qdss_size;
++	u32 fwuncached_size;
++	u32 secheap_size;
++	u32 q_tbl_size;
++	u32 qdata_size[HFI_Q_MAX];
++	u32 sfr_size;
++};
++
++struct icp_hfi_mem_region {
++	void *vaddr;
++	dma_addr_t dma_addr;
++	size_t size;
++};
++
++struct icp_hfi_mem {
++	/* These get their own allocations */
++	struct icp_hfi_mem_region shmem;
++	struct icp_hfi_mem_region qdss;
++	struct icp_hfi_mem_region fwuncached;
++
++	/* Pointers into the fwuncached region */
++	struct icp_hfi_mem_region secheap;
++	struct icp_hfi_mem_region q_tbl;
++	struct icp_hfi_mem_region q_data[HFI_Q_MAX];
++	struct icp_hfi_mem_region sfr;
++};
++
++struct icp_hfi_ops {
++	void (*raise_irq)(void *priv);
++};
++
++struct icp_hfi {
++	struct device *dev;
++	struct icp_hfi_mem hfi_mem;
++	const struct hfi_resources *res;
++
++	const struct icp_hfi_ops *ops;
++	void *priv;
++
++	/*
++	 * Queue Table Pointer
++	 * Points to hfi_q_tbl_hdr at hfi_mem.q_tbl.vaddr
++	 * Contains header + 4 x struct hfi_q_header
++	 */
++	struct hfi_q_tbl_hdr *q_tbl;
++
++	/*
++	* Synchronization
++	*/
++	struct mutex cmd_lock;
++	struct completion cmd_complete;
++
++	/*
++	 * State
++	 */
++	bool ready;         /* HFI fully initialized */
++	u32 fw_version;     /* From GP1 register after boot */
++	u32 api_version;    /* From INIT_DONE response */
++
++	/* Properties */
++	u32 prop_num;
++	u32 properties[HFI_MAX_PROPS];
++
++	/* Debug */
++	struct hfi_sfr *sfr;
++};
++
++/*
++ * HFI Queue Header - CAMX compatible
++ * Each field is padded to 64 bytes (16 u32s) for cache line alignment.
++ * The firmware expects this exact layout.
++ */
++struct hfi_q_hdr {
++	u32 dummy0[15];
++	u32 status;
++	u32 dummy1[15];
++	u32 start_addr;
++	u32 dummy2[15];
++	u32 type;
++	u32 dummy3[15];
++	u32 q_size;
++	u32 dummy4[15];
++	u32 pkt_size;
++	u32 dummy5[15];
++	u32 pkt_drop_cnt;
++	u32 dummy6[15];
++	u32 rx_wm;
++	u32 dummy7[15];
++	u32 tx_wm;
++	u32 dummy8[15];
++	u32 rx_req;
++	u32 dummy9[15];
++	u32 tx_req;
++	u32 dummy10[15];
++	u32 rx_irq_status;
++	u32 dummy11[15];
++	u32 tx_irq_status;
++	u32 dummy12[15];
++	u32 read_idx;
++	u32 dummy13[15];
++	u32 write_idx;
++	u32 dummy14[15];
++} __packed;
++
++struct hfi_q_tbl_hdr {
++	u32 version;
++	u32 size;
++	u32 q_hdr0_offset;
++	u32 q_hdr_size;
++	u32 num_queues;
++	u32 num_active_queues;
++	struct hfi_q_hdr q_hdr[];
++} __packed;
++
++struct hfi_pkt_hdr {
++	u32 size;
++	u32 type;
++} __packed;
++
++struct hfi_cmd_sys_init {
++	struct hfi_pkt_hdr hdr;
++} __packed;
++
++struct hfi_msg_init_done {
++	struct hfi_pkt_hdr hdr;
++	u32 error;
++	u32 prop_num;
++	u32 prop_data[];
++} __packed;
++
++struct hfi_cmd_ping {
++	struct hfi_pkt_hdr hdr;
++	u64 user_data;
++} __packed;
++
++struct hfi_msg_ping_ack {
++	struct hfi_pkt_hdr hdr;
++	u64 user_data;
++} __packed;
++
++struct hfi_msg_event {
++	struct hfi_pkt_hdr hdr;
++	u32 session_id;
++	u32 event_id;
++	u32 data1;
++	u32 data2;
++} __packed;
++
++struct hfi_cmd_ubwc_cfg {
++	struct hfi_pkt_hdr hdr;
++	u32 num_params;
++	u32 prop_type;
++	u32 ipe_fetch;
++	u32 ipe_write;
++	u32 bps_fetch;
++	u32 bps_write;
++} __packed;
++
++struct hfi_cmd_create_handle {
++	struct hfi_pkt_hdr hdr;
++	u32 handle_type;
++	u64 user_data0;
++	u64 user_data1;
++} __packed;
++
++struct hfi_msg_create_handle_ack {
++	struct hfi_pkt_hdr hdr;
++	u32 error;
++	u32 fw_handle;
++	u64 user_data0;
++	u64 user_data1;
++} __packed;
++
++struct hfi_cmd_async {
++	struct hfi_pkt_hdr hdr;
++	u32 opcode;
++	u32 fw_handle;
++	u64 user_data0;
++	u64 user_data1;
++	u32 num_handles;
++	u32 handle[1];
++	u32 payload[];
++} __packed;
++
++#define HFI_MSG_ASYNC_MAX_MSG 32
++struct hfi_msg_async_ack {
++	struct hfi_pkt_hdr hdr;
++	u32 opcode;
++	u64 user_data0;
++	u64 user_data1;
++	u32 error;
++	u32 msg[HFI_MSG_ASYNC_MAX_MSG];
++} __packed;
++
++struct hfi_cmd_set_property {
++	struct hfi_pkt_hdr hdr;
++	u32 num_prop;
++	u32 prop_data[];
++} __packed;
++
++struct hfi_msg_debug {
++	struct hfi_pkt_hdr hdr;
++	u32 msg_type;
++	u32 msg_size;
++	u32 timestamp_hi;
++	u32 timestamp_lo;
++	u8  msg_data[];
++} __packed;
++
++struct hfi_debug_cfg {
++	u32 debug_config;
++	u32 debug_mode;
++} __packed;
++
++struct hfi_msg_debug_level {
++	struct hfi_cmd_set_property hdr;
++	u32 prop_id;
++	struct hfi_debug_cfg cfg;
++} __packed;
++
++struct hfi_sfr {
++	u32 size;
++	char msg[HFI_SFR_LOG_SIZE];
++};
++
++static inline u32 hfi_pkt_size(void *pkt)
++{
++	struct hfi_pkt_hdr *pkt_hdr = pkt;
++	return pkt_hdr->size;
++}
++
++static inline u32 hfi_pkt_type(void *pkt)
++{
++	struct hfi_pkt_hdr *pkt_hdr = pkt;
++	return pkt_hdr->type;
++}
++
++static inline bool hfi_queue_empty(struct hfi_q_hdr *q)
++{
++	return READ_ONCE(q->read_idx) == READ_ONCE(q->write_idx);
++}
++
++static inline u32 hfi_queue_free(struct hfi_q_hdr *q)
++{
++	u32 ri = READ_ONCE(q->read_idx);
++	u32 wi = READ_ONCE(q->write_idx);
++	u32 used = (wi >= ri) ? (wi - ri) : (q->q_size - ri + wi);
++
++	return q->q_size - used - 1;
++}
++
++/* Queue management */
++int icp_hfi_init_queues(struct icp_hfi *hfi);
++void icp_hfi_deinit_queues(struct icp_hfi *hfi);
++
++/* ISR support - called from threaded IRQ handler */
++void icp_hfi_flush_debug_queue(struct icp_hfi *hfi);
++bool icp_hfi_process_msg_queue(struct icp_hfi *hfi);
++
++/* Core operations */
++int icp_hfi_core_init(struct icp_hfi *hfi);
++void icp_hfi_dump_sfr(struct icp_hfi *hfi);
++
++/**
++ * icp_set_ubwc_config - Set UBWC configuration for device
++ * @icp: ICP device
++ * @dev_type: HFI_DEV_TYPE_IPE or HFI_DEV_TYPE_BPS
++ * @cfg: UBWC configuration
++ *
++ * Should be called during IPE/BPS probe, before any contexts
++ * are created. ICP will send config to firmware on boot.
++ */
++int icp_hfi_set_ubwc_config(struct icp_device *icp, u32 dev_type,
++			    struct icp_ubwc_cfg *cfg);
++
++/**
++ * icp_ctx_create - Create processing context
++ * @icp: ICP device
++ * @dev_type: HFI_DEV_TYPE_IPE or HFI_DEV_TYPE_BPS
++ * @callback: Completion callback (called from workqueue)
++ * @priv: Private data for callback
++ *
++ * Returns context or ERR_PTR on failure.
++ */
++int icp_hfi_create_handle(struct icp_hfi *hfi, u32 handle_type,
++			  u64 ctx, u32 *fw_handle, u32 timeout_ms);
++
++/**
++ * icp_ctx_destroy - Destroy processing context
++ * @ctx: Context to destroy
++ */
++int icp_hfi_destroy_handle(struct icp_hfi *hfi, u32 handle_type,
++			   u64 ctx, u32 fw_handle, u32 timeout_ms);
++#if 0
++/**
++ * icp_ctx_config_io - Configure IO buffers for context
++ * @ctx: Processing context
++ * @cfg_iova: IOVA of configuration buffer
++ * @cfg_size: Size of configuration buffer
++ */
++int icp_ctx_config_io(struct icp_context *ctx, dma_addr_t cfg_iova, u32 cfg_size);
++
++/**
++ * icp_ctx_submit_frame - Submit frame for processing
++ * @ctx: Processing context
++ * @req: Frame request descriptor
++ *
++ * Asynchronous - completion via callback.
++ */
++int icp_ctx_submit_frame(struct icp_context *ctx, struct icp_frame_request *req);
++
++/**
++ * icp_ctx_abort - Abort pending operations
++ * @ctx: Processing context
++ */
++int icp_ctx_abort(struct icp_context *ctx);
++
++/**
++ * icp_ctx_wait - Wait for operation completion
++ * @ctx: Processing context
++ * @timeout_ms: Timeout in milliseconds
++ *
++ * Returns 0 on success, -ETIMEDOUT on timeout.
++ */
++int icp_ctx_wait(struct icp_context *ctx, unsigned long timeout_ms);
++#endif
++
++#endif /* __CAMSS_ICP_HFI_H__ */
+diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..1617dea15a5a767d3b6b3c754311531d11c6d67d
+--- /dev/null
++++ b/drivers/media/platform/qcom/camss/camss-icp.c
+@@ -0,0 +1,623 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Qualcomm ICP (Image Control Processor) driver for X1E80100
++ *
++ */
++#define DEBUG
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/dma-mapping.h>
++#include <linux/firmware.h>
++#include <linux/firmware/qcom/qcom_scm.h>
++#include <linux/interconnect.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/iommu.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++#include <linux/pm_domain.h>
++#include <linux/pm_runtime.h>
++#include <linux/soc/qcom/mdt_loader.h>
++
++#include "camss-icp.h"
++#include "camss-icp-hfi.h"
++
++/* CSR register offsets */
++#define ICP_CSR_HW_VERSION		0x00
++#define ICP_CSR_TCM_SIZE		0x08
++#define ICP_CSR_DBG_STATUS		0x44
++#define ICP_CSR_DBG_CTRL		0x48
++
++/* CIRQ register offsets */
++#define CIRQ_OB_MASK			0x00
++#define CIRQ_OB_STATUS			0x04
++#define CIRQ_OB_CLEAR			0x08
++#define CIRQ_HOST2ICPINT		0x124
++
++/* CIRQ bits */
++#define CIRQ_ICP2HOSTINT		BIT(0)
++#define CIRQ_WDT_BITE_WS0		BIT(6)
++
++#define ICP_CLK_MAX			32
++
++#define POLLING_SLEEP_US		1000
++#define POLLING_TIMEOUT_US		20000
++
++/* HFI polling - match CAMX: 100us interval, 2 second timeout */
++#define HFI_POLL_DELAY_US		100
++#define HFI_POLL_TIMEOUT_US		2000000
++
++/* ICC paths */
++#define HFI_MAX_ICC_PATHS		4
++struct camss_icp_resources {
++	int pas_id;
++	const char ** const clk_names;
++	int clk_num;
++	const char ** const noc_names;
++	int noc_num;
++	struct hfi_resources hfi_res;
++};
++
++struct camss_icp {
++	struct device *dev;
++	void __iomem *csr_base;
++	void __iomem *cirq_base;
++	int irq;
++
++	struct dev_pm_domain_list *pd_list;
++
++	struct clk_bulk_data clks[ICP_CLK_MAX];
++	struct icc_path *icc_path[HFI_MAX_ICC_PATHS];
++
++	struct icp_hfi hfi;
++
++	phys_addr_t fw_phys;
++	size_t fw_size;
++
++	const struct camss_icp_resources *icp_res;
++};
++
++struct icp_hfi *icp_hfi_get(struct device *dev)
++{
++	struct camss_icp *icp = dev_get_drvdata(dev);
++
++	if (!icp)
++		return ERR_PTR(-ENODEV);
++
++	get_device(icp->dev);
++	return &icp->hfi;
++}
++EXPORT_SYMBOL(icp_hfi_get);
++
++void icp_hfi_put(struct icp_hfi *phfi)
++{
++	struct camss_icp *icp = container_of(phfi, struct camss_icp, hfi);
++
++	put_device(icp->dev);
++}
++EXPORT_SYMBOL(icp_hfi_put);
++
++/*
++ * Raise interrupt to firmware - called by HFI layer after CMD_Q write
++ */
++static void icp_raise_irq(void *priv)
++{
++	struct camss_icp *icp = priv;
++
++	dev_dbg(icp->dev, "Raising HOST2ICPINT (CIRQ STATUS before: 0x%x)\n",
++		readl(icp->cirq_base + CIRQ_OB_STATUS));
++
++	writel(1, icp->cirq_base + CIRQ_HOST2ICPINT);
++
++	/* Small delay then check if anything changed */
++	udelay(100);
++	dev_dbg(icp->dev, "CIRQ STATUS after HOST2ICPINT: 0x%x\n",
++		readl(icp->cirq_base + CIRQ_OB_STATUS));
++}
++
++/* Load firmware */
++static int icp_load_firmware(struct camss_icp *icp)
++{
++	const struct camss_icp_resources *icp_res = icp->icp_res;
++	const struct firmware *fw;
++	struct device_node *node;
++	struct resource res;
++	const char *fw_name;
++	char fw_path[64];
++	void *vaddr;
++	ssize_t fw_size;
++	int ret;
++
++	ret = of_property_read_string(icp->dev->of_node, "firmware-name", &fw_name);
++	if (ret)
++		return ret;
++
++	snprintf(fw_path, sizeof(fw_path), "%s.mdt", fw_name);
++
++	node = of_parse_phandle(icp->dev->of_node, "memory-region", 0);
++	if (!node)
++		return -ENODEV;
++
++	ret = of_address_to_resource(node, 0, &res);
++	of_node_put(node);
++	if (ret)
++		return ret;
++
++	dev_dbg(icp->dev, "FW memory: phys=0x%pa size=%llu\n",
++		&res.start, resource_size(&res));
++
++	ret = firmware_request_nowarn(&fw, fw_path, icp->dev);
++	if (ret)
++		return ret;
++
++	fw_size = qcom_mdt_get_size(fw);
++	if (fw_size < 0 || (size_t)fw_size > resource_size(&res)) {
++		release_firmware(fw);
++		return -EINVAL;
++	}
++
++	vaddr = ioremap_wc(res.start, resource_size(&res));
++	if (!vaddr) {
++		release_firmware(fw);
++		return -ENOMEM;
++	}
++
++	ret = qcom_mdt_load(icp->dev, fw, fw_path, icp_res->pas_id, vaddr,
++			    res.start, resource_size(&res), NULL);
++	iounmap(vaddr);
++	release_firmware(fw);
++
++	if (ret == 0) {
++		dev_dbg(icp->dev, "Firmware loaded: %s (%zd bytes)\n", fw_path, fw_size);
++		icp->fw_phys = res.start;
++		icp->fw_size = fw_size;
++	}
++
++	return ret;
++}
++
++static irqreturn_t camss_icp_isr_thread(int irq, void *data)
++{
++	struct camss_icp *icp = data;
++	u32 status;
++
++	/* Re-read status for logging */
++	status = readl(icp->cirq_base + CIRQ_OB_STATUS);
++
++	dev_dbg(icp->dev, "IRQ thread: status=0x%x\n", status);
++
++	if (status & CIRQ_WDT_BITE_WS0) {
++		dev_err(icp->dev, "ICP watchdog bite!\n");
++		icp_hfi_dump_sfr(&icp->hfi);
++	}
++
++	/* Process message queue - signals waiters if data present */
++	icp_hfi_process_msg_queue(&icp->hfi);
++
++	/* Flush debug queue - async debug messages */
++	icp_hfi_flush_debug_queue(&icp->hfi);
++
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t camss_icp_isr(int irq, void *data)
++{
++	struct camss_icp *icp = data;
++	u32 status;
++
++	dev_dbg(icp->dev, "IRQ ISR\n");
++
++	status = readl(icp->cirq_base + CIRQ_OB_STATUS);
++	if (!status)
++		return IRQ_NONE;
++
++	writel(status, icp->cirq_base + CIRQ_OB_CLEAR);
++
++	return IRQ_WAKE_THREAD;
++}
++
++/* Dump GP registers for debugging */
++void icp_dump_gp_regs(struct camss_icp *icp, const char *label)
++{
++	u32 regs[20];
++	int i;
++
++	dev_info(icp->dev, "=== %s ===\n", label);
++	dev_info(icp->dev, "Raw CSR offsets 0x20-0x6C (GP registers):\n");
++
++	for (i = 0; i < 20; i++)
++		regs[i] = readl(icp->csr_base + 0x20 + i * 4);
++
++	for (i = 0; i < 20; i += 4)
++		dev_info(icp->dev, "  [0x%02x]: %08x %08x %08x %08x\n",
++			 0x20 + i * 4, regs[i], regs[i+1], regs[i+2], regs[i+3]);
++}
++
++void icp_hfi_latch_regs(struct camss_icp *icp)
++{
++	struct icp_hfi *hfi = &icp->hfi;
++	struct device *dev = hfi->dev;
++
++	/* Shared memory */
++	writel(hfi->hfi_mem.shmem.dma_addr, icp->csr_base + HFI_REG_SHARED_MEM_PTR);
++	writel(hfi->hfi_mem.shmem.size, icp->csr_base + HFI_REG_SHARED_MEM_SIZE);
++
++	/* QTBL - header describing HFI queues */
++	writel(hfi->hfi_mem.q_tbl.dma_addr, icp->csr_base + HFI_REG_QTBL_PTR);
++
++	/* QDSS */
++	writel(hfi->hfi_mem.qdss.dma_addr, icp->csr_base + HFI_REG_QDSS_IOVA);
++	writel(HFI_QDSS_SIZE, icp->csr_base + HFI_REG_QDSS_IOVA_SIZE);
++
++	/* FW Uncached */
++	writel(hfi->hfi_mem.fwuncached.dma_addr, icp->csr_base + HFI_REG_FWUNCACHED_IOVA);
++	writel(HFI_FWUNCACHED_SIZE, icp->csr_base + HFI_REG_FWUNCACHED_SIZE);
++
++	/* Sec heap */
++	writel(hfi->hfi_mem.secheap.dma_addr, icp->csr_base + HFI_REG_SECONDARY_HEAP_PTR);
++	writel(HFI_SECHEAP_SIZE, icp->csr_base + HFI_REG_SECONDARY_HEAP_SIZE);
++
++	/* SFR buffer */
++	writel(hfi->hfi_mem.sfr.dma_addr, icp->csr_base + HFI_REG_SFR_PTR);
++
++	/* IO regions - use standard CAMX values TODO: fix this */
++	writel(0x10c00000, icp->csr_base + HFI_REG_IO_REGION_1_IOVA);
++	writel(0xcf400000, icp->csr_base + HFI_REG_IO_REGION_1_SIZE);
++	writel(0xe0800000, icp->csr_base + HFI_REG_IO_REGION_2_IOVA);
++	writel(0x1e700000, icp->csr_base + HFI_REG_IO_REGION_2_SIZE);
++
++}
++
++/* HFI operations */
++static const struct icp_hfi_ops hfi_ops = {
++	.raise_irq = icp_raise_irq,
++};
++
++static int icp_boot(struct camss_icp *icp)
++{
++	const struct camss_icp_resources *icp_res = icp->icp_res;
++	u32 hw_version, data;
++	int i, ret;
++
++	/* Power on all domains via runtime PM */
++	ret = pm_runtime_resume_and_get(icp->dev);
++	if (ret) {
++		dev_err(icp->dev, "Failed to power on: %d\n", ret);
++		return ret;
++	}
++
++	/* Enable clocks */
++	ret = clk_bulk_prepare_enable(icp_res->clk_num, icp->clks);
++	if (ret) {
++		dev_err(icp->dev, "Failed to enable clocks: %d\n", ret);
++		return ret;
++	}
++
++	for (i = 0; i < icp_res->noc_num; i++) {
++		if (icp->icc_path[i]) {
++			dev_dbg(icp->dev, "Voting for BW now %s\n", icp_res->noc_names[i]);
++			ret = icc_set_bw(icp->icc_path[i], 100000000, 1000000000);
++			if (ret) {
++				dev_err(icp->dev, "Voting for %s failed\n", icp_res->noc_names[i]);
++				return ret;
++			}
++		}
++	}
++
++	/* Verify HW version */
++	hw_version = readl(icp->csr_base + ICP_CSR_HW_VERSION);
++	dev_info(icp->dev, "HW version: 0x%08x\n", hw_version);
++
++	if (hw_version == 0 || hw_version == 0xffffffff) {
++		dev_err(icp->dev, "Invalid HW version\n");
++		ret = -EIO;
++		goto err_clk;
++	}
++
++	/* Configure interrupts */
++	writel(0x7f, icp->cirq_base + CIRQ_OB_CLEAR);
++	writel(CIRQ_ICP2HOSTINT | CIRQ_WDT_BITE_WS0, icp->cirq_base + CIRQ_OB_MASK);
++
++	/* Load firmware */
++	ret = icp_load_firmware(icp);
++	if (ret)
++		goto err_clk;
++
++	/* Allocate HFI queues */
++	ret = icp_hfi_init_queues(&icp->hfi);
++	if (ret)
++		goto err_clk;
++
++	/* Start firmware via TrustZone */
++	ret = qcom_scm_pas_auth_and_reset(icp_res->pas_id);
++	if (ret) {
++		dev_err(icp->dev, "TZ auth_and_reset failed: %d\n", ret);
++		goto err_hfi;
++	}
++
++	/* Wait for firmware to boot */
++	usleep_range(5000, 51000);
++
++	/* Program HFI pointers after bootup */
++	icp_hfi_latch_regs(icp);
++
++	/*
++	 * Boot handshake with ICP firmware.
++	 *
++	 * After TZ starts the ICP, firmware waits for host to program
++	 * GP registers with memory addresses and signal readiness.
++	 *
++	 * Register assignments:
++	 *   GP1 (0x24) = FW_VERSION        - firmware writes its version
++	 *   GP2 (0x28) = HOST_ICP_INIT_REQ - host writes 1 ("addresses ready")
++	 *   GP3 (0x2C) = ICP_HOST_INIT_RESP - firmware writes 1 ("ready")
++	 *   GP4-GP18   = memory addresses   - host programs with IOVAs
++	 *
++	 * Sequence:
++	 *   1. Program GP4-GP18 with memory addresses  [done above]
++	 *   2. Write GP2 = 1 (HOST_ICP_INIT_REQUEST)
++	 *   3. Poll GP3 until ICP_INIT_RESP_SUCCESS (1)
++	 *   4. Read GP1 for firmware version
++	 *
++	 */
++
++	/* Signal firmware */
++	writel(ICP_INIT_REQUEST_SET, icp->csr_base + HFI_REG_HOST_ICP_INIT_REQ);
++
++	wmb();
++
++	/* Wait for firmware to signal ready via GP3 */
++	ret = readl_poll_timeout(icp->csr_base + HFI_REG_ICP_HOST_INIT_RESP,
++				 data, data == ICP_INIT_RESP_SUCCESS,
++				 HFI_POLL_DELAY_US, HFI_POLL_TIMEOUT_US);
++
++	if (ret < 0) {
++		dev_err(icp->dev, "Firmware ready timeout (GP3=0x%08x)\n",
++			readl(icp->csr_base + HFI_REG_ICP_HOST_INIT_RESP));
++		dev_err(icp->dev, "  GP1 (FW_VERSION)=0x%08x GP2 (INIT_REQ)=0x%08x\n",
++			readl(icp->csr_base + HFI_REG_FW_VERSION),
++			readl(icp->csr_base + HFI_REG_HOST_ICP_INIT_REQ));
++		icp_dump_gp_regs(icp, "FW READY TIMEOUT");
++		icp_hfi_dump_sfr(&icp->hfi);
++		ret = -ETIMEDOUT;
++		goto err_hfi;
++	}
++
++	/* Read firmware version from GP1 */
++	icp->hfi.fw_version = readl(icp->csr_base + HFI_REG_FW_VERSION);
++	dev_dbg(icp->dev, "Firmware ready! version=0x%08x\n", icp->hfi.fw_version);
++
++	/* Dump CIRQ state after FW init */
++	dev_info(icp->dev, "CIRQ after FW init: MASK=0x%x STATUS=0x%x\n",
++		 readl(icp->cirq_base + CIRQ_OB_MASK),
++		 readl(icp->cirq_base + CIRQ_OB_STATUS));
++
++	/* Dump GP registers to verify what firmware sees */
++	dev_info(icp->dev, "GP registers after FW init:\n");
++	dev_info(icp->dev, "  GP0 (unused):        0x%08x\n", readl(icp->csr_base + 0x20));
++	dev_info(icp->dev, "  GP1 (FW_VERSION):    0x%08x\n", readl(icp->csr_base + HFI_REG_FW_VERSION));
++	dev_info(icp->dev, "  GP2 (INIT_REQ):      0x%08x\n", readl(icp->csr_base + HFI_REG_HOST_ICP_INIT_REQ));
++	dev_info(icp->dev, "  GP3 (INIT_RESP):     0x%08x\n", readl(icp->csr_base + HFI_REG_ICP_HOST_INIT_RESP));
++	dev_info(icp->dev, "  GP4 (SHMEM_PTR):     0x%08x (we wrote: 0x%08x)\n",
++		 readl(icp->csr_base + HFI_REG_SHARED_MEM_PTR), (u32)icp->hfi.hfi_mem.shmem.dma_addr);
++	dev_info(icp->dev, "  GP5 (SHMEM_SIZE):    0x%08x (we wrote: 0x%08x)\n",
++		 readl(icp->csr_base + HFI_REG_SHARED_MEM_SIZE), (u32)icp->hfi.hfi_mem.shmem.size);
++	dev_info(icp->dev, "  GP6 (QTBL_PTR):      0x%08x (we wrote: 0x%08x)\n",
++		 readl(icp->csr_base + HFI_REG_QTBL_PTR), (u32)icp->hfi.hfi_mem.q_tbl.dma_addr);
++	dev_info(icp->dev, "  GP7 (SECHEAP_PTR):   0x%08x (we wrote: 0x%08x)\n",
++		 readl(icp->csr_base + HFI_REG_SECONDARY_HEAP_PTR), (u32)icp->hfi.hfi_mem.secheap.dma_addr);
++	dev_info(icp->dev, "  GP8 (SECHEAP_SIZE):  0x%08x (we wrote: 0x%08x)\n",
++		 readl(icp->csr_base + HFI_REG_SECONDARY_HEAP_SIZE), HFI_SECHEAP_SIZE);
++	dev_info(icp->dev, "  GP9 (STATUS):        0x%08x\n", readl(icp->csr_base + HFI_REG_RESERVED));
++	dev_info(icp->dev, "  GP10 (SFR_PTR):      0x%08x (we wrote: 0x%08x)\n",
++		 readl(icp->csr_base + HFI_REG_SFR_PTR), (u32)icp->hfi.hfi_mem.sfr.dma_addr);
++	dev_info(icp->dev, "  GP11 (QDSS_IOVA):    0x%08x (we wrote: 0x%08x)\n",
++		 readl(icp->csr_base + HFI_REG_QDSS_IOVA), (u32)icp->hfi.hfi_mem.qdss.dma_addr);
++	dev_info(icp->dev, "  GP12 (QDSS_SIZE):    0x%08x\n", readl(icp->csr_base + HFI_REG_QDSS_IOVA_SIZE));
++	dev_info(icp->dev, "  GP17 (FWUNCACHED):   0x%08x (we wrote: 0x%08x)\n",
++		 readl(icp->csr_base + HFI_REG_FWUNCACHED_IOVA), (u32)icp->hfi.hfi_mem.fwuncached.dma_addr);
++	dev_info(icp->dev, "  GP18 (FWUNC_SIZE):   0x%08x (we wrote: 0x%08x)\n",
++		 readl(icp->csr_base + HFI_REG_FWUNCACHED_SIZE), HFI_FWUNCACHED_SIZE);
++
++	return 0;
++err_hfi:
++	icp_hfi_deinit_queues(&icp->hfi);
++err_clk:
++	for (i = 0; i < icp_res->noc_num; i++) {
++		if (icp->icc_path[i])
++			icc_set_bw(icp->icc_path[i], 0, 0);
++	}
++	clk_bulk_disable_unprepare(icp_res->clk_num, icp->clks);
++	return ret;
++}
++
++static int camss_icp_probe(struct platform_device *pdev)
++{
++	struct dev_pm_domain_attach_data pd_data = { .pd_flags = PD_FLAG_DEV_LINK_ON };
++	const struct camss_icp_resources *icp_res;
++	struct camss_icp *icp;
++	int ret, i;
++
++	icp_res = of_device_get_match_data(&pdev->dev);
++	if (!icp_res)
++		return -EINVAL;
++
++	icp = devm_kzalloc(&pdev->dev, sizeof(*icp), GFP_KERNEL);
++	if (!icp)
++		return -ENOMEM;
++
++	icp->dev = &pdev->dev;
++	icp->icp_res = icp_res;
++	icp->hfi.res = &icp_res->hfi_res;
++	icp->hfi.ops = &hfi_ops;
++	icp->hfi.dev = icp->dev;
++	icp->hfi.priv = icp;
++
++	platform_set_drvdata(pdev, icp);
++
++	icp->csr_base = devm_platform_ioremap_resource_byname(pdev, "csr");
++	if (IS_ERR(icp->csr_base))
++		return PTR_ERR(icp->csr_base);
++
++	icp->cirq_base = devm_platform_ioremap_resource_byname(pdev, "cirq");
++	if (IS_ERR(icp->cirq_base))
++		return PTR_ERR(icp->cirq_base);
++
++	icp->irq = platform_get_irq(pdev, 0);
++	if (icp->irq < 0)
++		return icp->irq;
++
++	/* Reserved memory for HFI */
++	ret = of_reserved_mem_device_init_by_idx(&pdev->dev, pdev->dev.of_node, 1);
++	if (ret && ret != -ENODEV) {
++		dev_err(&pdev->dev, "Failed to init reserved memory: %d\n", ret);
++		return ret;
++	}
++
++	ret = dev_pm_domain_attach_list(&pdev->dev, &pd_data, &icp->pd_list);
++	if (ret < 0 && ret != -EEXIST) {
++		dev_err(&pdev->dev, "Failed to attach power domains: %d\n", ret);
++		return ret;
++	}
++
++	for (i = 0; i < icp_res->clk_num; i++) {
++		dev_info(&pdev->dev, "clk=%s\n", icp_res->clk_names[i]);
++		icp->clks[i].id = icp_res->clk_names[i];
++	}
++
++	ret = devm_clk_bulk_get(&pdev->dev, icp_res->clk_num, icp->clks);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to get clocks: %d\n", ret);
++		goto err_pd;
++	}
++
++	for (i = 0; i < icp_res->noc_num; i++) {
++		icp->icc_path[i] = devm_of_icc_get(&pdev->dev, icp_res->noc_names[i]);
++		if (IS_ERR(icp->icc_path[i])) {
++			if (PTR_ERR(icp->icc_path[i]) != -ENODATA) {
++				ret = PTR_ERR(icp->icc_path[i]);
++				goto err_pd;
++			}
++			icp->icc_path[i] = NULL;
++		}
++	};
++
++	ret = devm_request_threaded_irq(&pdev->dev, icp->irq, camss_icp_isr,
++					camss_icp_isr_thread,
++					IRQF_TRIGGER_RISING | IRQF_ONESHOT,
++					"camss-icp", icp);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to request IRQ: %d\n", ret);
++		goto err_pd;
++	}
++
++	pm_runtime_enable(&pdev->dev);
++
++	ret = icp_boot(icp);
++	if (ret)
++		goto err_pd;
++
++	ret = icp_hfi_core_init(&icp->hfi);
++	if (ret)
++		goto err_pd;
++
++	return 0;
++
++err_pd:
++	if (icp->pd_list)
++		dev_pm_domain_detach_list(icp->pd_list);
++
++	return ret;
++}
++
++static void camss_icp_remove(struct platform_device *pdev)
++{
++	struct camss_icp *icp = platform_get_drvdata(pdev);
++	const struct camss_icp_resources *icp_res;
++	int i;
++
++	icp_res = icp->icp_res;
++	qcom_scm_pas_shutdown(icp_res->pas_id);
++
++	icp_hfi_deinit_queues(&icp->hfi);
++
++	for (i = 0; i < icp_res->noc_num; i++) {
++		if (icp->icc_path[i])
++			icc_set_bw(icp->icc_path[i], 0, 0);
++	}
++	clk_bulk_disable_unprepare(icp_res->clk_num, icp->clks);
++
++	if (icp->pd_list)
++		dev_pm_domain_detach_list(icp->pd_list);
++
++}
++
++static const char * const x1e80100_clk_names [] = {
++	"ahb", "core", "debug_xo",
++	"gcc_hf_axi", "gcc_sf_axi",
++	"cpas_ahb", "core_ahb", "cpas_fast_ahb",
++	"camnoc_axi_rt", "camnoc_axi_nrt",
++	"bps_ahb", "bps_fast_ahb", "bps", "cpas_bps",
++	"ipe_ahb", "ipe_nps_fast_ahb", "ipe_pps_fast_ahb",
++	"ipe_nps", "ipe_pps", "cpas_ipe",
++};
++
++static const char * const x1e80100_noc_names [] = {
++	"ahb",
++	"hf_0",
++	"sf_0",
++	"sf_icp"
++};
++
++struct camss_icp_resources x1e80100_icp_res = {
++	.pas_id = 33,
++	.clk_names = x1e80100_clk_names,
++	.clk_num = ARRAY_SIZE(x1e80100_clk_names),
++	.noc_names = x1e80100_noc_names,
++	.noc_num = ARRAY_SIZE(x1e80100_noc_names),
++	.hfi_res = {
++		.shmem_size = SZ_1M,	 // change to 0x0FC00000 per downstream ?
++		.qdss_size = SZ_1M,
++		.fwuncached_size = 7 * SZ_1M,
++		/*
++		 * Carve sub-regions from FwUncached:
++		 * Over-allocate as CamX does for now.
++		 *   +0x000000: SecHeap (1MB)
++		 *   +0x100000: QTBL (1MB)
++		 *   +0x200000: CMD_Q (1MB)
++		 *   +0x300000: MSG_Q (1MB)
++		 *   +0x400000: DBG_Q (1MB)
++		 *   +0x500000: SFR (1MB alloc 4KB used)
++		 */
++		.secheap_size = SZ_1M,
++		.q_tbl_size = SZ_1M,
++		.qdata_size[HFI_Q_CMD_TYPE] = SZ_1M,
++		.qdata_size[HFI_Q_MSG_TYPE] = SZ_1M,
++		.qdata_size[HFI_Q_DBG_TYPE] = SZ_1M,
++		.sfr_size = SZ_1M,
++	},
++};
++
++static const struct of_device_id camss_icp_of_match[] = {
++	{ .compatible = "qcom,x1e80100-camss-icp", .data = &x1e80100_icp_res},
++	{ }
++};
++MODULE_DEVICE_TABLE(of, camss_icp_of_match);
++
++static struct platform_driver camss_icp_driver = {
++	.probe = camss_icp_probe,
++	.remove = camss_icp_remove,
++	.driver = {
++		.name = "camss-icp",
++		.of_match_table = camss_icp_of_match,
++	},
++};
++
++module_platform_driver(camss_icp_driver);
++
++MODULE_DESCRIPTION("Qualcomm ICP driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/media/platform/qcom/camss/camss-icp.h b/drivers/media/platform/qcom/camss/camss-icp.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..68039df4a28b478e5b9c33ee57f2f202390c8694
+--- /dev/null
++++ b/drivers/media/platform/qcom/camss/camss-icp.h
+@@ -0,0 +1,58 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * ICP provides HFI interface used by IPE and BPS V4L2 m2m drivers.
++ *
++ * Copyright (c) 2026 Bryan O'Donoghue.
++ */
++#ifndef __CAMSS_ICP_H__
++#define __CAMSS_ICP_H__
++
++#include <linux/completion.h>
++#include <linux/device.h>
++#include <linux/types.h>
++
++#include "camss-icp-hfi.h"
++
++struct icp_device;
++
++/*
++ * ICP Context
++ *
++ * Represents a processing session with firmware.
++ * Created per-stream in IPE/BPS V4L2 driver.
++ */
++struct icp_context {
++	u32 id;
++	u32 dev_type;
++	u32 fw_handle;
++	struct completion done;
++	int result;
++	void *priv;
++	void (*callback)(struct icp_context *ctx, int status);
++};
++
++/*
++ * UBWC Configuration
++ */
++struct icp_ubwc_cfg {
++	u32 fetch_cfg;
++	u32 write_cfg;
++};
++
++/*
++ * Frame Processing Descriptor
++ */
++struct icp_frame_request {
++	dma_addr_t input_iova;
++	u32 input_size;
++	dma_addr_t output_iova;
++	u32 output_size;
++	dma_addr_t cmdbufs_iova;
++	u32 cmdbufs_size;
++	void *priv;
++};
++
++struct icp_hfi *icp_hfi_get(struct device *dev);
++void icp_hfi_put(struct icp_hfi *hfi);
++
++#endif /* __CAMSS_ICP_H__ */

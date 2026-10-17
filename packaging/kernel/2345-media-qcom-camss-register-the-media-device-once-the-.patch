@@ -1,0 +1,91 @@
+From de6b139e3d3b276b241a006aeb28309a9bbc5d78 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Wed, 14 Oct 2026 12:35:44 -0400
+Subject: [PATCH 2345/2368] media: qcom: camss: register the media device once
+ the sensors have bound
+
+The media device was registered at probe, before the async notifier had
+bound the sensors and before any entity had a device node. Userspace
+enumerating the graph in that window saw the ISP without its sensors
+and, in libcamera's case, never looked again once they arrived: on a
+fast boot the session's pipewire started 0.2 s before the front sensor
+probed and the desktop came up with no cameras until wireplumber was
+restarted.
+
+Register the media device from the notifier's complete callback, after
+the sensor links are created and the subdevice nodes exist, so the
+graph userspace sees is always complete. The remove and error paths
+already cope with an unregistered media device.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 015c5bc4e3f7a0a147897a3f4c62902902d71418)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 908135ce6aa72200ce104d2225f8c9dc547fe2ae..bf727c976126e1d8886060089e33201ddf0f0509 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -5210,12 +5210,12 @@ static int camss_subdev_notifier_complete(struct v4l2_async_notifier *async)
+ 	struct camss *camss = container_of(async, struct camss, notifier);
+ 	struct v4l2_device *v4l2_dev = &camss->v4l2_dev;
+ 	struct v4l2_subdev *sd;
++	int ret;
+ 
+ 	list_for_each_entry(sd, &v4l2_dev->subdevs, list) {
+ 		struct csiphy_device *csiphy = sd->host_priv;
+ 		struct media_entity *input, *sensor;
+ 		unsigned int i;
+-		int ret;
+ 
+ 		if (!csiphy)
+ 			continue;
+@@ -5242,7 +5242,22 @@ static int camss_subdev_notifier_complete(struct v4l2_async_notifier *async)
+ 		}
+ 	}
+ 
+-	return v4l2_device_register_subdev_nodes(&camss->v4l2_dev);
++	ret = v4l2_device_register_subdev_nodes(&camss->v4l2_dev);
++	if (ret < 0)
++		return ret;
++
++	/*
++	 * Register the media device only now that the sensors are in the
++	 * graph and every entity has its device node. Registered at probe,
++	 * it appeared to userspace with an incomplete graph, and a camera
++	 * stack that enumerated it then (pipewire at session start) never
++	 * saw the sensors that bound a moment later.
++	 */
++	ret = media_device_register(&camss->media_dev);
++	if (ret < 0)
++		dev_err(camss->dev, "Failed to register media device: %d\n", ret);
++
++	return ret;
+ }
+ 
+ static const struct v4l2_async_notifier_operations camss_subdev_notifier_ops = {
+@@ -5513,24 +5528,17 @@ static int camss_probe(struct platform_device *pdev)
+ 	if (ret < 0)
+ 		goto err_register_subdevs;
+ 
+-	ret = media_device_register(&camss->media_dev);
+-	if (ret < 0) {
+-		dev_err(dev, "Failed to register media device: %d\n", ret);
+-		goto err_register_subdevs;
+-	}
+-
++	/* The media device is registered once the sensors have bound */
+ 	camss->notifier.ops = &camss_subdev_notifier_ops;
+ 	ret = v4l2_async_nf_register(&camss->notifier);
+ 	if (ret) {
+ 		dev_err(dev,
+ 			"Failed to register async subdev nodes: %d\n", ret);
+-		goto err_media_device_unregister;
++		goto err_register_subdevs;
+ 	}
+ 
+ 	return 0;
+ 
+-err_media_device_unregister:
+-	media_device_unregister(&camss->media_dev);
+ err_register_subdevs:
+ 	camss_unregister_entities(camss);
+ err_v4l2_device_unregister:

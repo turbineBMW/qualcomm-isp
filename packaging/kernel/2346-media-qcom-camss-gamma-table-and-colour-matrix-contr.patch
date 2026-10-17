@@ -1,0 +1,414 @@
+From 474d0827f26fdd519ee472618981b1d75e444a39 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Wed, 14 Oct 2026 13:32:46 -0400
+Subject: [PATCH 2346/2368] media: qcom: camss: gamma table and colour matrix
+ controls on the PIX line
+
+The PIX line programmed a fixed gamma 2.2 LUT and an identity colour
+correction matrix, which left the IFE's output flat and desaturated;
+both belong to the sensor tuning, so expose them as array controls on
+the line's subdevice next to the white balance and black level
+controls: a 256-entry 12-bit gamma table, and a 3x3 Q10 matrix with
+output offsets in RGB order.
+
+The gamma table loads into the LUT bank not in use and the module
+switches banks, so a change while streaming takes effect whole on the
+next frame. The matrix picks the Q factor from its largest coefficient,
+since the registers keep twelve significant bits and tuned matrices
+reach beyond +-2.0.
+
+Array controls take one default for all elements, so the driver's own
+curve and the identity matrix are written into the controls' current
+values at creation.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 7bcf7961095296323cf8be2a6cb9716ec106f731)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-680.c b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+index 13869e45ccf4efa6865a7b994a77520be2d6ba9b..7852de18c1c8d9948eb563cdb25a6faa09abd794 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-680.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+@@ -489,24 +489,103 @@ static int vfe_pix_program_output_stage(struct vfe_device *vfe, struct vfe_line
+ }
+ 
+ /*
+- * vfe_680_pix_set_params - Apply the PIX line's white balance and black level
++ * vfe_680_pix_load_glut - Load the gamma table into one LUT bank
++ * @vfe: VFE device
++ * @win: the IFE register window
++ * @table: 256 12-bit outputs
++ * @bank: the DMI bank to load, then select for the module
++ *
++ * The module reads from the bank its bank register names, so a table can
++ * be loaded into the other bank while streaming and switched in whole.
++ */
++static void vfe_680_pix_load_glut(struct vfe_device *vfe, void __iomem *win,
++				  const u16 *table, u32 bank)
++{
++	u32 base = VFE_PIX_GLUT;
++	unsigned int i, sel;
++
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_DMI_LUT_BANK_CFG, bank);
++	for (sel = VFE_PIX_GLUT_SEL_G; sel <= VFE_PIX_GLUT_SEL_R; sel++) {
++		vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_DMI_LUT_CFG, sel);
++		vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_DMI_CFG,
++				  VFE_PIX_GLUT_DMI_CFG_AUTO_LOAD_EN);
++		for (i = 0; i < VFE_PIX_GLUT_SIZE; i++)
++			writel(table[i] & 0xfff, win + base + VFE_PIX_GLUT_DMI_DATA);
++	}
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_DMI_LUT_CFG, VFE_PIX_GLUT_SEL_NONE);
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_MODULE_LUT_BANK_CFG, bank);
++}
++
++/*
++ * vfe_680_pix_set_cc - Program the colour correction matrix
++ * @vfe: VFE device
++ * @win: the IFE register window
++ * @m: the control's Q10 matrix, RGB row-major, then the R, G, B offsets
++ *
++ * The registers group coefficients by input channel (A: G, B: B, C: R),
++ * each for the G, B and R outputs in turn. Twelve significant bits; a
++ * matrix with a coefficient beyond +-2.0 moves to Q9 (or lower) whole.
++ */
++static void vfe_680_pix_set_cc(struct vfe_device *vfe, void __iomem *win, const s32 *m)
++{
++	u32 base = VFE_PIX_CC;
++	s32 c[9] = {
++		m[4], m[7], m[1],	/* G in: to G, B, R out */
++		m[5], m[8], m[2],	/* B in */
++		m[3], m[6], m[0],	/* R in */
++	};
++	s32 k[3] = { m[10], m[11], m[9] };
++	unsigned int i, q = VFE_PIX_CC_Q10;
++	s32 max = 0;
++
++	for (i = 0; i < 9; i++)
++		max = max(max, abs(c[i]));
++	while (max > 2047 && q > 0) {
++		q--;
++		max >>= 1;
++		for (i = 0; i < 9; i++)
++			c[i] /= 2;
++	}
++
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_A0, VFE_PIX_CC_PAIR(c[0], c[1]));
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_A2, c[2] & 0xfff);
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_B0, VFE_PIX_CC_PAIR(c[3], c[4]));
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_B2, c[5] & 0xfff);
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_C0, VFE_PIX_CC_PAIR(c[6], c[7]));
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_C2, c[8] & 0xfff);
++	for (i = 0; i < 3; i++)
++		vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_K(i),
++				  VFE_PIX_CC_K_VAL(clamp(k[i], -1024, 1023)));
++	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_Q, q);
++}
++
++/*
++ * vfe_680_pix_set_params - Apply the PIX line's controls
+  * @line: the PIX line
+  *
+- * Called at start and whenever a control changes while streaming. Both
+- * live in the white balance module: the gains, and the per-channel
+- * subtract that takes the sensor pedestal off before the gains and before
+- * the gamma LUT.
++ * Called at start and whenever a control changes while streaming. The
++ * white balance gains and the black level live in the white balance
++ * module (the subtract takes the sensor pedestal off before the gains and
++ * before the gamma LUT); the colour correction matrix in its own; and a
++ * changed gamma table goes into the LUT bank not in use.
+  */
+ static void vfe_680_pix_set_params(struct vfe_line *line)
+ {
+ 	struct vfe_device *vfe = to_vfe(line);
+ 	void __iomem *win = vfe_pix_ext_window(vfe, VFE_PIX_EXT_SIZE);
++	struct vfe_pix_params *params = &line->pix_params;
+ 	u32 sub;
+ 
+ 	if (!win)
+ 		return;
+ 
+ 	vfe_680_cgc_override(vfe, true);
++	vfe_680_pix_set_cc(vfe, win, params->ccm);
++	if (params->gamma_dirty) {
++		params->gamma_bank ^= 1;
++		vfe_680_pix_load_glut(vfe, win, params->gamma, params->gamma_bank);
++		params->gamma_dirty = false;
++	}
+ 	vfe_pix_ext_write(vfe, win, VFE_PIX_WB + VFE_PIX_WB_GAIN_G,
+ 			  VFE_PIX_WB_GAIN(line->pix_params.wb_g));
+ 	vfe_pix_ext_write(vfe, win, VFE_PIX_WB + VFE_PIX_WB_GAIN_B,
+@@ -527,12 +606,13 @@ static void vfe_680_pix_set_params(struct vfe_line *line)
+  * @vfe: VFE device
+  * @line: the PIX line
+  *
+- * White balance at unity, demosaic with the OPE's default interpolation
+- * constants, colour correction at identity, a BT.601 full-range RGB to YCbCr transform scaled from the
++ * The gamma LUT and the control-set modules (white balance, black level,
++ * colour correction), demosaic with the OPE's default interpolation
++ * constants, a BT.601 full-range RGB to YCbCr transform scaled from the
+  * 14-bit demosaic output to the 12-bit colour transform output (with the
+- * sensor black level subtracted on its input), a gamma 2.2 LUT, and the
+- * VID output path downscalers: luma to the compose size, chroma from the
+- * full 4:4:4 frame to half of it in both directions.
++ * sensor black level subtracted on its input), and the VID output path
++ * downscalers: luma to the compose size, chroma from the full 4:4:4 frame
++ * to half of it in both directions.
+  */
+ static int vfe_pix_program_iq(struct vfe_device *vfe, struct vfe_line *line)
+ {
+@@ -546,28 +626,21 @@ static int vfe_pix_program_iq(struct vfe_device *vfe, struct vfe_line *line)
+ 		{ -107, -21, 128, VFE_PIX_CST_CHROMA_OFFSET },	/* Cr */
+ 	};
+ 	u32 base;
+-	unsigned int i, sel;
++	unsigned int i;
+ 
+ 	if (!win)
+ 		return -ENOMEM;
+ 
+ 	vfe_680_cgc_override(vfe, true);
+ 
++	/* the table goes into bank 0 here; set_params then only loads changes */
++	line->pix_params.gamma_bank = 0;
++	line->pix_params.gamma_dirty = false;
++	vfe_680_pix_load_glut(vfe, win, line->pix_params.gamma, 0);
+ 	vfe_680_pix_set_params(line);
+ 	vfe_pix_ext_write(vfe, win, VFE_PIX_WB + VFE_PIX_WB_CFG_94, ~0u);
+ 	vfe_pix_ext_write(vfe, win, VFE_PIX_WB + VFE_CLC_MODULE_CFG, VFE_CLC_MODULE_CFG_EN);
+-
+-	base = VFE_PIX_CC;
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_A0, VFE_PIX_CC_PAIR(VFE_PIX_CC_UNITY, 0));
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_A2, 0);
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_B0, VFE_PIX_CC_PAIR(0, VFE_PIX_CC_UNITY));
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_B2, 0);
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_C0, 0);
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_COEFF_C2, VFE_PIX_CC_UNITY);
+-	for (i = 0; i < 3; i++)
+-		vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_K(i), VFE_PIX_CC_K_VAL(0));
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_CC_Q, VFE_PIX_CC_Q10);
+-	vfe_pix_ext_write(vfe, win, base + VFE_CLC_MODULE_CFG, VFE_CLC_MODULE_CFG_EN);
++	vfe_pix_ext_write(vfe, win, VFE_PIX_CC + VFE_CLC_MODULE_CFG, VFE_CLC_MODULE_CFG_EN);
+ 
+ 	base = VFE_PIX_DEMOSAIC;
+ 	vfe_pix_ext_write(vfe, win, base + VFE_PIX_DEMOSAIC_INTERP_COEFF,
+@@ -597,18 +670,7 @@ static int vfe_pix_program_iq(struct vfe_device *vfe, struct vfe_line *line)
+ 	vfe_pix_ext_write(vfe, win, VFE_PIX_CST + VFE_CLC_MODULE_CFG,
+ 			  VFE_CLC_MODULE_CFG_EN);
+ 
+-	base = VFE_PIX_GLUT;
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_DMI_LUT_BANK_CFG, 0);
+-	for (sel = VFE_PIX_GLUT_SEL_G; sel <= VFE_PIX_GLUT_SEL_R; sel++) {
+-		vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_DMI_LUT_CFG, sel);
+-		vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_DMI_CFG,
+-				  VFE_PIX_GLUT_DMI_CFG_AUTO_LOAD_EN);
+-		for (i = 0; i < VFE_PIX_GLUT_SIZE; i++)
+-			writel(vfe_pix_gamma_2_2[i], win + base + VFE_PIX_GLUT_DMI_DATA);
+-	}
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_DMI_LUT_CFG, VFE_PIX_GLUT_SEL_NONE);
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_GLUT_MODULE_LUT_BANK_CFG, 0);
+-	vfe_pix_ext_write(vfe, win, base + VFE_CLC_MODULE_CFG, VFE_CLC_MODULE_CFG_EN);
++	vfe_pix_ext_write(vfe, win, VFE_PIX_GLUT + VFE_CLC_MODULE_CFG, VFE_CLC_MODULE_CFG_EN);
+ 
+ 	/*
+ 	 * The VID output scalers: the sink pad's compose rectangle is the
+@@ -1096,6 +1158,7 @@ const struct vfe_hw_ops vfe_ops_680 = {
+ 	.vfe_wm_start = vfe_wm_start,
+ 	.vfe_wm_stop = vfe_wm_stop,
+ 	.pix_set_params = vfe_680_pix_set_params,
++	.pix_gamma_default = vfe_pix_gamma_2_2,
+ 	.vfe_buf_done = vfe_buf_done,
+ 	.vfe_wm_update = vfe_wm_update,
+ 	.reg_update = vfe_reg_update,
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index c261107215bb3b06210cbe895bfc298514d5028c..f2a4469f87bce486a9709331d548b2616f1fd370 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -2161,6 +2161,15 @@ static int vfe_pix_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_BLACK_LEVEL:
+ 		line->pix_params.black_level = ctrl->val;
+ 		break;
++	case V4L2_CID_QCOM_CAMSS_GAMMA_LUT:
++		memcpy(line->pix_params.gamma, ctrl->p_new.p_u16,
++		       sizeof(line->pix_params.gamma));
++		line->pix_params.gamma_dirty = true;
++		break;
++	case V4L2_CID_QCOM_CAMSS_CCM:
++		memcpy(line->pix_params.ccm, ctrl->p_new.p_s32,
++		       sizeof(line->pix_params.ccm));
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -2175,20 +2184,71 @@ static const struct v4l2_ctrl_ops vfe_pix_ctrl_ops = {
+ 	.s_ctrl = vfe_pix_s_ctrl,
+ };
+ 
++static const struct v4l2_ctrl_config vfe_pix_gamma_ctrl = {
++	.ops = &vfe_pix_ctrl_ops,
++	.id = V4L2_CID_QCOM_CAMSS_GAMMA_LUT,
++	.name = "Gamma LUT",
++	.type = V4L2_CTRL_TYPE_U16,
++	.min = 0,
++	.max = QCOM_CAMSS_GAMMA_LUT_MAX,
++	.step = 1,
++	.def = 0,
++	.dims = { QCOM_CAMSS_GAMMA_LUT_SIZE },
++};
++
++static const struct v4l2_ctrl_config vfe_pix_ccm_ctrl = {
++	.ops = &vfe_pix_ctrl_ops,
++	.id = V4L2_CID_QCOM_CAMSS_CCM,
++	.name = "Colour Correction Matrix",
++	.type = V4L2_CTRL_TYPE_INTEGER,
++	.min = -8 * QCOM_CAMSS_CCM_UNITY,
++	.max = 8 * QCOM_CAMSS_CCM_UNITY - 1,
++	.step = 1,
++	.def = 0,
++	.dims = { QCOM_CAMSS_CCM_SIZE },
++};
++
+ static int vfe_pix_init_controls(struct vfe_line *line)
+ {
+ 	struct v4l2_ctrl_handler *hdl = &line->ctrls;
++	struct vfe_device *vfe = to_vfe(line);
++	struct vfe_pix_params *params = &line->pix_params;
++	struct v4l2_ctrl *ctrl;
++	unsigned int i;
+ 	int ret;
+ 
+-	line->pix_params.wb_r = VFE_PIX_WB_UNITY;
+-	line->pix_params.wb_g = VFE_PIX_WB_UNITY;
+-	line->pix_params.wb_b = VFE_PIX_WB_UNITY;
+-	line->pix_params.black_level = 0;
++	params->wb_r = VFE_PIX_WB_UNITY;
++	params->wb_g = VFE_PIX_WB_UNITY;
++	params->wb_b = VFE_PIX_WB_UNITY;
++	params->black_level = 0;
++	for (i = 0; i < QCOM_CAMSS_GAMMA_LUT_SIZE; i++)
++		params->gamma[i] = vfe->res->hw_ops->pix_gamma_default ?
++				   vfe->res->hw_ops->pix_gamma_default[i] : i << 4;
++	memset(params->ccm, 0, sizeof(params->ccm));
++	params->ccm[0] = QCOM_CAMSS_CCM_UNITY;
++	params->ccm[4] = QCOM_CAMSS_CCM_UNITY;
++	params->ccm[8] = QCOM_CAMSS_CCM_UNITY;
+ 
+-	ret = v4l2_ctrl_handler_init(hdl, 4);
++	ret = v4l2_ctrl_handler_init(hdl, 6);
+ 	if (ret)
+ 		return ret;
+ 
++	/*
++	 * Array controls take one default for every element; the real
++	 * defaults (the driver's gamma curve, an identity matrix) go into
++	 * the current value directly before the handler is in use.
++	 */
++	ctrl = v4l2_ctrl_new_custom(hdl, &vfe_pix_gamma_ctrl, NULL);
++	if (ctrl) {
++		memcpy(ctrl->p_cur.p_u16, params->gamma, sizeof(params->gamma));
++		memcpy(ctrl->p_new.p_u16, params->gamma, sizeof(params->gamma));
++	}
++	ctrl = v4l2_ctrl_new_custom(hdl, &vfe_pix_ccm_ctrl, NULL);
++	if (ctrl) {
++		memcpy(ctrl->p_cur.p_s32, params->ccm, sizeof(params->ccm));
++		memcpy(ctrl->p_new.p_s32, params->ccm, sizeof(params->ccm));
++	}
++
+ 	v4l2_ctrl_new_std(hdl, &vfe_pix_ctrl_ops, V4L2_CID_RED_BALANCE,
+ 			  0, VFE_PIX_WB_MAX, 1, VFE_PIX_WB_UNITY);
+ 	v4l2_ctrl_new_std(hdl, &vfe_pix_ctrl_ops, V4L2_CID_BLUE_BALANCE,
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index 9739855b6bdd3f21358a9cbc7e7f10d140c53078..5a869da6c3fa4f0b84a596b590448d6dcc4ce435 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -11,6 +11,7 @@
+ #define QC_MSM_CAMSS_VFE_H
+ 
+ #include <linux/clk.h>
++#include <linux/qcom-camss-controls.h>
+ #include <linux/spinlock_types.h>
+ #include <media/media-entity.h>
+ #include <media/v4l2-device.h>
+@@ -90,6 +91,10 @@ struct vfe_pix_params {
+ 	u16 wb_g;
+ 	u16 wb_b;
+ 	u16 black_level;	/* in 10-bit units */
++	u16 gamma[QCOM_CAMSS_GAMMA_LUT_SIZE];	/* 12-bit outputs */
++	bool gamma_dirty;	/* table changed since it was loaded */
++	u8 gamma_bank;		/* LUT bank holding the loaded table */
++	s32 ccm[QCOM_CAMSS_CCM_SIZE];		/* Q10, RGB rows, then offsets */
+ };
+ 
+ struct vfe_line {
+@@ -130,6 +135,8 @@ struct vfe_hw_ops {
+ 	void (*vfe_wm_stop)(struct vfe_device *vfe, u8 wm);
+ 	/* pix_set_params - Apply line->pix_params to a running PIX line (optional) */
+ 	void (*pix_set_params)(struct vfe_line *line);
++	/* pix_gamma_default - The gamma table the PIX line starts with (optional) */
++	const u16 *pix_gamma_default;
+ 	void (*vfe_buf_done)(struct vfe_device *vfe, int port_id);
+ 	void (*vfe_wm_update)(struct vfe_device *vfe, u8 wm, u32 addr,
+ 			      struct vfe_line *line);
+diff --git a/include/uapi/linux/qcom-camss-controls.h b/include/uapi/linux/qcom-camss-controls.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..c8b31ed91099b57a74631dc6f6c77fad43012233
+--- /dev/null
++++ b/include/uapi/linux/qcom-camss-controls.h
+@@ -0,0 +1,41 @@
++/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
++/*
++ * Qualcomm CAMSS IFE pixel path controls
++ *
++ * The image quality blocks the driver programs on the PIX line that take
++ * tables or matrices from userspace, as V4L2 array controls on the line's
++ * subdevice next to the standard white balance and black level controls.
++ */
++
++#ifndef __UAPI_QCOM_CAMSS_CONTROLS_H
++#define __UAPI_QCOM_CAMSS_CONTROLS_H
++
++#include <linux/v4l2-controls.h>
++
++/*
++ * Gamma: one 256-entry table, applied to all three channels after colour
++ * correction. An entry is the 12-bit output for the input value whose top
++ * eight bits index it; i << 4 is the identity. Takes effect on the next
++ * frame while streaming.
++ */
++#define V4L2_CID_QCOM_CAMSS_GAMMA_LUT	(V4L2_CID_USER_QCOM_CAMSS_BASE + 0)
++#define QCOM_CAMSS_GAMMA_LUT_SIZE	256
++#define QCOM_CAMSS_GAMMA_LUT_MAX	4095
++
++/*
++ * Colour correction matrix: twelve Q10 signed values, the 3x3 matrix in
++ * row-major RGB order followed by the three output offsets:
++ *
++ *   R' = m[0] R + m[1] G + m[2] B + m[9]
++ *   G' = m[3] R + m[4] G + m[5] B + m[10]
++ *   B' = m[6] R + m[7] G + m[8] B + m[11]
++ *
++ * 1024 is unity; the hardware keeps 12 significant bits, so a matrix with
++ * a coefficient beyond +-2.0 loses a bit of precision in all of them.
++ * The offsets are in 12-bit pixel units.
++ */
++#define V4L2_CID_QCOM_CAMSS_CCM		(V4L2_CID_USER_QCOM_CAMSS_BASE + 1)
++#define QCOM_CAMSS_CCM_SIZE		12
++#define QCOM_CAMSS_CCM_UNITY		1024
++
++#endif /* __UAPI_QCOM_CAMSS_CONTROLS_H */
+diff --git a/include/uapi/linux/v4l2-controls.h b/include/uapi/linux/v4l2-controls.h
+index affec0ab4781507be761cb791ff737460acf9cb7..7e21a591e03f0f37c32b8a1dacc1ed0124124ac1 100644
+--- a/include/uapi/linux/v4l2-controls.h
++++ b/include/uapi/linux/v4l2-controls.h
+@@ -234,6 +234,12 @@ enum v4l2_colorfx {
+  */
+ #define V4L2_CID_USER_MALI_C55_BASE		(V4L2_CID_USER_BASE + 0x1230)
+ 
++/*
++ * The base for the Qualcomm CAMSS driver controls.
++ * We reserve 16 controls for this driver.
++ */
++#define V4L2_CID_USER_QCOM_CAMSS_BASE		(V4L2_CID_USER_BASE + 0x1240)
++
+ /* MPEG-class control IDs */
+ /* The MPEG controls are applicable to all codec controls
+  * and the 'MPEG' part of the define is historical */

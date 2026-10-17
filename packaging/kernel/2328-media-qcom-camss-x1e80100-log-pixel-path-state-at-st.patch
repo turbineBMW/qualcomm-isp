@@ -1,0 +1,284 @@
+From 481db36626d61083c100e85f91548b9d637c120b Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Tue, 13 Oct 2026 21:23:48 -0400
+Subject: [PATCH 2328/2368] media: qcom: camss: x1e80100: log pixel path state
+ at stop (bring-up diagnostics)
+
+Count IPP SOF/EOF in the CSID ISR, enable the pixel path format measure,
+the IFE diagnostic frame counters, top debug and write master debug
+status, and log all of it when the PIX line stops. Bring-up aid, not for
+upstream in this form.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit a666ebf0597059be0da98d628b2ca6c0846bd386)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-680.c b/drivers/media/platform/qcom/camss/camss-csid-680.c
+index e7b56646d1b9ae5ace0f38f54a39f0fe86c4cb1a..8a5726f0fa4fa7a5b3709b3862f148376f00b9e2 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-680.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-680.c
+@@ -168,16 +168,31 @@ static inline void csid_wrapper_write(struct csid_device *csid, u32 reg,
+ #define CSID_IPP_IRQ_MASK					0xb0
+ #define CSID_IPP_IRQ_CLEAR					0xb4
+ #define		CSID_IPP_IRQ_RUP_DONE				BIT(23)
++#define		CSID_IPP_IRQ_CAMIF_SOF				BIT(4)
++#define		CSID_IPP_IRQ_CAMIF_EOF				BIT(3)
+ #define CSID_IPP_CFG0						0x300
+ #define CSID_IPP_CTRL						0x304
+ #define		CSID_IPP_CTRL_RESUME_AT_FRAME_BOUNDARY		BIT(0)
+ #define CSID_IPP_CFG1						0x310
+ #define		IPP_CFG1_TIMESTAMP_STB_FRAME			BIT(1)
++#define		IPP_CFG1_FORMAT_MEASURE_EN			BIT(8)
+ #define		IPP_CFG1_TIMESTAMP_EN				BIT(9)
+ #define		IPP_CFG1_PIX_STORE_EN				BIT(14)
+ #define CSID_IPP_ERR_RECOVERY_CFG0				0x318
+ #define		IPP_ERR_RECOVERY_OVERFLOW_CTRL			(BIT(0) | BIT(3))
++#define CSID_IPP_CAMIF_FRAME_CFG				0x330
++#define CSID_IPP_DEBUG_CAMIF_1					0x340
++#define CSID_IPP_DEBUG_CAMIF_0					0x344
++#define CSID_IPP_DEBUG_HALT_STATUS				0x348
+ #define CSID_IPP_FRM_DROP_PERIOD				0x378
++#define CSID_IPP_FORMAT_MEASURE_CFG0				0x384
++#define		IPP_FORMAT_MEASURE_CFG0_HBI_VBI_CNT_EN		(BIT(2) | BIT(3) | BIT(4))
++#define CSID_IPP_FORMAT_MEASURE0				0x38c
++#define CSID_IPP_FORMAT_MEASURE1				0x390
++#define CSID_IPP_FORMAT_MEASURE2				0x394
++#define CSID_IPP_TIMESTAMP_CURR0_SOF				0x398
++#define CSID_IPP_TIMESTAMP_CURR0_EOF				0x3a8
++#define CSID_CSI2_RX_TOTAL_PKTS_RCVD_REG			0x240
+ #define CSID_IPP_IRQ_SUBSAMPLE_PATTERN				0x37c
+ #define CSID_IPP_IRQ_SUBSAMPLE_PERIOD				0x380
+ #define		CSID_IPP_REG_UPDATE				(BIT(0) | BIT(16))
+@@ -393,7 +408,10 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable, u8
+ 	val = IPP_CFG1_TIMESTAMP_STB_FRAME;
+ 	val |= IPP_CFG1_TIMESTAMP_EN;
+ 	val |= IPP_CFG1_PIX_STORE_EN;
++	val |= IPP_CFG1_FORMAT_MEASURE_EN;
+ 	csid_reg_write(csid, CSID_IPP_CFG1, val);
++	csid_reg_write(csid, CSID_IPP_FORMAT_MEASURE_CFG0,
++		       IPP_FORMAT_MEASURE_CFG0_HBI_VBI_CNT_EN);
+ 
+ 	csid_reg_write(csid, CSID_IPP_IRQ_SUBSAMPLE_PERIOD, 0);
+ 	csid_reg_write(csid, CSID_IPP_IRQ_SUBSAMPLE_PATTERN, 1);
+@@ -408,8 +426,46 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable, u8
+ 	csid_reg_write(csid, CSID_IPP_CFG0, val);
+ }
+ 
++/*
++ * csid_ipp_debug_dump - Log where the pixel path stands
++ * @csid: CSID device
++ *
++ * Called when the pixel path is stopped, while the block is still powered:
++ * event counts, the measured frame geometry, the sticky status words and
++ * the CAMIF debug state say whether frames reached the path and left it.
++ */
++static void csid_ipp_debug_dump(struct csid_device *csid)
++{
++	struct device *dev = csid->camss->dev;
++
++	dev_info(dev,
++		 "csid%u IPP: sof %u eof %u, rx pkts %u, top 0x%08x bufdone 0x%08x rx 0x%08x ipp 0x%08x\n",
++		 csid->id, csid->ipp_sof, csid->ipp_eof,
++		 readl(csid->base + CSID_CSI2_RX_TOTAL_PKTS_RCVD_REG),
++		 readl(csid->base + CSID_TOP_IRQ_STATUS),
++		 readl(csid->base + CSID_BUF_DONE_IRQ_STATUS),
++		 readl(csid->base + CSID_CSI2_RX_IRQ_STATUS),
++		 readl(csid->base + CSID_IPP_IRQ_STATUS));
++	dev_info(dev,
++		 "csid%u IPP: measure0 0x%08x measure1 0x%08x measure2 0x%08x camif0 0x%08x camif1 0x%08x halt 0x%08x ts sof 0x%08x eof 0x%08x\n",
++		 csid->id,
++		 readl(csid->base + CSID_IPP_FORMAT_MEASURE0),
++		 readl(csid->base + CSID_IPP_FORMAT_MEASURE1),
++		 readl(csid->base + CSID_IPP_FORMAT_MEASURE2),
++		 readl(csid->base + CSID_IPP_DEBUG_CAMIF_0),
++		 readl(csid->base + CSID_IPP_DEBUG_CAMIF_1),
++		 readl(csid->base + CSID_IPP_DEBUG_HALT_STATUS),
++		 readl(csid->base + CSID_IPP_TIMESTAMP_CURR0_SOF),
++		 readl(csid->base + CSID_IPP_TIMESTAMP_CURR0_EOF));
++}
++
+ static void __csid_ctrl_ipp(struct csid_device *csid, int enable)
+ {
++	if (!enable)
++		csid_ipp_debug_dump(csid);
++	else
++		csid->ipp_sof = csid->ipp_eof = 0;
++
+ 	csid_reg_write(csid, CSID_IPP_CTRL,
+ 		       enable ? CSID_IPP_CTRL_RESUME_AT_FRAME_BOUNDARY : 0);
+ }
+@@ -474,7 +530,8 @@ static int csid_reset(struct csid_device *csid)
+ 	}
+ 
+ 	if (!csid_is_lite(csid))
+-		csid_reg_write(csid, CSID_IPP_IRQ_MASK, CSID_IPP_IRQ_RUP_DONE);
++		csid_reg_write(csid, CSID_IPP_IRQ_MASK, CSID_IPP_IRQ_RUP_DONE |
++			       CSID_IPP_IRQ_CAMIF_SOF | CSID_IPP_IRQ_CAMIF_EOF);
+ 
+ 	/* Clear RDI status */
+ 	csid_reg_write(csid, CSID_BUF_DONE_IRQ_CLEAR, ~0u);
+@@ -541,6 +598,10 @@ static irqreturn_t csid_isr(int irq, void *dev)
+ 
+ 		if (val & CSID_IPP_IRQ_RUP_DONE)
+ 			csid_rup_complete(csid, CSID_IPP_PORT);
++		if (val & CSID_IPP_IRQ_CAMIF_SOF)
++			csid->ipp_sof++;
++		if (val & CSID_IPP_IRQ_CAMIF_EOF)
++			csid->ipp_eof++;
+ 
+ 		if (buf_done_val & BUF_DONE_IRQ_STATUS_IPP)
+ 			camss_buf_done(csid->camss, csid->id, CSID_IPP_PORT);
+@@ -569,6 +630,7 @@ static void csid_subdev_init(struct csid_device *csid) {}
+ const struct csid_hw_ops csid_ops_680 = {
+ 	.configure_testgen_pattern = NULL,
+ 	.configure_stream = csid_configure_stream,
++	.debug_dump = csid_ipp_debug_dump,
+ 	.hw_version = csid_hw_version,
+ 	.isr = csid_isr,
+ 	.reset = csid_reset,
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.h b/drivers/media/platform/qcom/camss/camss-csid.h
+index 827c9b2f032e3901b7694c5ebfc419cd9024ae15..eb562870c36e63eff0ac779212801dd417ef1173 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.h
++++ b/drivers/media/platform/qcom/camss/camss-csid.h
+@@ -138,6 +138,8 @@ struct csid_hw_ops {
+ 	 * @is_clear: Indicate if it is clearing reg update or setting reg update
+ 	 */
+ 	void (*reg_update)(struct csid_device *csid, int port_id, bool is_clear);
++	/* bring-up aid: log the pixel path state while powered */
++	void (*debug_dump)(struct csid_device *csid);
+ };
+ 
+ struct csid_subdev_resources {
+@@ -168,6 +170,8 @@ struct csid_device {
+ 	struct v4l2_ctrl_handler ctrls;
+ 	struct v4l2_ctrl *testgen_mode;
+ 	const struct csid_subdev_resources *res;
++	u32 ipp_sof;
++	u32 ipp_eof;
+ };
+ 
+ struct camss_subdev_resources;
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-680.c b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+index 400bacf2bf669751922650112ebefe893eb520f8..be18b3575233e9ffa1a2906b4875878587ddad0c 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-680.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+@@ -13,6 +13,7 @@
+ #include <linux/iopoll.h>
+ 
+ #include "camss.h"
++#include "camss-csid.h"
+ #include "camss-vfe.h"
+ 
+ /*
+@@ -41,6 +42,14 @@ static inline void vfe_reg_write(struct vfe_device *vfe, u32 reg, u32 val)
+ #define VFE_TOP_IRQ_CMD(vfe)			(vfe_is_lite(vfe) ? 0x38 : 0x30)
+ #define		VFE_TOP_IRQ_CMD_GLOBAL_CLEAR	BIT(0)
+ #define VFE_TOP_DIAG_CONFIG			(vfe_is_lite(vfe) ? 0x40 : 0x50)
++#define		VFE_TOP_DIAG_CONFIG_EN		BIT(0)
++#define VFE_TOP_DIAG_SENSOR_STATUS_0		0x54
++#define VFE_TOP_DIAG_SENSOR_STATUS_1		0x58
++#define VFE_TOP_DIAG_FRM_CNT_STATUS_0		0x5c
++#define VFE_TOP_DIAG_FRM_CNT_STATUS_1		0x60
++#define VFE_TOP_IPP_VIOLATION_STATUS		0x64
++#define VFE_TOP_DEBUG_CFG			0xfc
++#define		VFE_TOP_DEBUG_CFG_EN		0x3
+ 
+ #define VFE_TOP_DEBUG_11(vfe)			(vfe_is_lite(vfe) ? 0x40 : 0xcc)
+ #define VFE_TOP_DEBUG_12(vfe)			(vfe_is_lite(vfe) ? 0x40 : 0xd0)
+@@ -73,6 +82,9 @@ static inline void vfe_reg_write(struct vfe_device *vfe, u32 reg, u32 val)
+ #define		VFE_BUS_MMU_PREFETCH_CFG_EN	BIT(0)
+ #define VFE_BUS_MMU_PREFETCH_MAX_OFFSET(vfe, c)	((vfe_is_lite(vfe) ? 0x464 : 0xe64) + (c) * 0x100)
+ #define VFE_BUS_ADDR_STATUS0(vfe, c)		((vfe_is_lite(vfe) ? 0x470 : 0xe70) + (c) * 0x100)
++#define VFE_BUS_DEBUG_STATUS_CFG(vfe, c)	((vfe_is_lite(vfe) ? 0x480 : 0xe80) + (c) * 0x100)
++#define VFE_BUS_DEBUG_STATUS_0(vfe, c)		((vfe_is_lite(vfe) ? 0x484 : 0xe84) + (c) * 0x100)
++#define VFE_BUS_DEBUG_STATUS_TOP(vfe)		(vfe_is_lite(vfe) ? 0x2d8 : 0xcd8)
+ #define VFE_BUS_BW_LIMITER(vfe, c)		((vfe_is_lite(vfe) ? 0x41c : 0xe1c) + (c) * 0x100)
+ #define		VFE_BUS_BW_LIMITER_DEFAULT	0xf
+ #define		VFE_BUS_PACKER_CFG_PLAIN8_LSB_MSB_10	0x3
+@@ -246,6 +258,13 @@ static void vfe_pix_wm_start(struct vfe_device *vfe, struct vfe_line *line)
+ 	/* Buffer done comes through the CSID; VFE IRQs stay off */
+ 	vfe_disable_irq(vfe);
+ 
++	/* Frame counters, top debug and write master debug status, for the dump */
++	vfe_reg_write(vfe, VFE_TOP_DIAG_CONFIG,
++		      readl(vfe->base + VFE_TOP_DIAG_CONFIG) | VFE_TOP_DIAG_CONFIG_EN);
++	vfe_reg_write(vfe, VFE_TOP_DEBUG_CFG, VFE_TOP_DEBUG_CFG_EN);
++	for (wm = VFE_WM_FULL_Y; wm <= VFE_WM_FULL_C; wm++)
++		vfe_reg_write(vfe, VFE_BUS_DEBUG_STATUS_CFG(vfe, wm), 1);
++
+ 	for (wm = VFE_WM_FULL_Y; wm <= VFE_WM_FULL_C; wm++)
+ 		vfe_reg_write(vfe, VFE_BUS_WRITE_CLIENT_CFG(vfe, wm),
+ 			      VFE_BUS_WRITE_CLIENT_CFG_EN);
+@@ -301,11 +320,73 @@ static void vfe_wm_start(struct vfe_device *vfe, u8 rdi, struct vfe_line *line)
+ 		rdi, wm, pix->width, pix->height, stride);
+ }
+ 
++/*
++ * vfe_pix_debug_dump - Log where the pixel path stands inside the IFE
++ * @vfe: VFE device
++ *
++ * Called at stop while the block is powered: top status and diagnostic
++ * frame counters say whether the IFE consumed frames, the bus status words
++ * say whether the write masters wrote and whether anything overflowed.
++ */
++static void vfe_pix_debug_dump(struct vfe_device *vfe)
++{
++	struct device *dev = vfe->camss->dev;
++	struct camss *camss = vfe->camss;
++	unsigned int i;
++
++	for (i = 0; i < camss->res->csid_num; i++) {
++		struct csid_device *csid = &camss->csid[i];
++
++		if (!csid_is_lite(csid) && csid->res->hw_ops->debug_dump &&
++		    csid->subdev.entity.use_count)
++			csid->res->hw_ops->debug_dump(csid);
++	}
++
++	dev_info(dev,
++		 "vfe%u PIX top: irq0 0x%08x irq1 0x%08x diag 0x%08x sensor 0x%08x 0x%08x frames 0x%08x 0x%08x ipp_violation 0x%08x\n",
++		 vfe->id,
++		 readl(vfe->base + VFE_TOP_IRQn_STATUS(vfe, 0)),
++		 readl(vfe->base + VFE_TOP_IRQn_STATUS(vfe, 1)),
++		 readl(vfe->base + VFE_TOP_DIAG_CONFIG),
++		 readl(vfe->base + VFE_TOP_DIAG_SENSOR_STATUS_0),
++		 readl(vfe->base + VFE_TOP_DIAG_SENSOR_STATUS_1),
++		 readl(vfe->base + VFE_TOP_DIAG_FRM_CNT_STATUS_0),
++		 readl(vfe->base + VFE_TOP_DIAG_FRM_CNT_STATUS_1),
++		 readl(vfe->base + VFE_TOP_IPP_VIOLATION_STATUS));
++	/* 17 top debug words, four bits of state per pipeline module */
++	dev_info(dev,
++		 "vfe%u PIX dbg: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\n",
++		 vfe->id,
++		 readl(vfe->base + 0xa0), readl(vfe->base + 0xa4),
++		 readl(vfe->base + 0xa8), readl(vfe->base + 0xac),
++		 readl(vfe->base + 0xb0), readl(vfe->base + 0xb4),
++		 readl(vfe->base + 0xb8), readl(vfe->base + 0xbc),
++		 readl(vfe->base + 0xc0), readl(vfe->base + 0xc4),
++		 readl(vfe->base + 0xc8), readl(vfe->base + 0xcc),
++		 readl(vfe->base + 0xd0), readl(vfe->base + 0xd4),
++		 readl(vfe->base + 0xd8), readl(vfe->base + 0xdc),
++		 readl(vfe->base + 0xe0));
++	dev_info(dev,
++		 "vfe%u PIX bus: irq0 0x%08x irq1 0x%08x ccif 0x%08x overflow 0x%08x imgsize 0x%08x dbgtop 0x%08x wm0 addr 0x%08x dbg 0x%08x wm1 addr 0x%08x dbg 0x%08x\n",
++		 vfe->id,
++		 readl(vfe->base + VFE_BUS_IRQn_STATUS(vfe, 0)),
++		 readl(vfe->base + VFE_BUS_IRQn_STATUS(vfe, 1)),
++		 readl(vfe->base + VFE_BUS_WR_VIOLATION_STATUS(vfe)),
++		 readl(vfe->base + VFE_BUS_WR_OVERFLOW_STATUS(vfe)),
++		 readl(vfe->base + VFE_BUS_WR_IMAGE_VIOLATION_STATUS(vfe)),
++		 readl(vfe->base + VFE_BUS_DEBUG_STATUS_TOP(vfe)),
++		 readl(vfe->base + VFE_BUS_ADDR_STATUS0(vfe, VFE_WM_FULL_Y)),
++		 readl(vfe->base + VFE_BUS_DEBUG_STATUS_0(vfe, VFE_WM_FULL_Y)),
++		 readl(vfe->base + VFE_BUS_ADDR_STATUS0(vfe, VFE_WM_FULL_C)),
++		 readl(vfe->base + VFE_BUS_DEBUG_STATUS_0(vfe, VFE_WM_FULL_C)));
++}
++
+ static void vfe_wm_stop(struct vfe_device *vfe, u8 rdi)
+ {
+ 	u8 wm = RDI_WM(rdi);
+ 
+ 	if (rdi == VFE_LINE_PIX && !vfe_is_lite(vfe)) {
++		vfe_pix_debug_dump(vfe);
+ 		vfe_reg_write(vfe, VFE_BUS_WRITE_CLIENT_CFG(vfe, VFE_WM_FULL_Y), 0);
+ 		vfe_reg_write(vfe, VFE_BUS_WRITE_CLIENT_CFG(vfe, VFE_WM_FULL_C), 0);
+ 		return;

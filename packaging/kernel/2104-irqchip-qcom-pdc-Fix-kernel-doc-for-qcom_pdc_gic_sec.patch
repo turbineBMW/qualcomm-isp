@@ -1,0 +1,28 @@
+From ec188f2d5722adbcaf4876e2607508ae48fa85b8 Mon Sep 17 00:00:00 2001
+From: Thomas Gleixner <tglx@kernel.org>
+Date: Wed, 8 Jul 2026 19:54:14 +0200
+Subject: [PATCH 2104/2165] irqchip/qcom-pdc: Fix kernel doc for
+ qcom_pdc_gic_secondary_set_type()
+
+Copy and pasta without fixing up the comment results in kernel doc build fail.
+
+Fixes: ad01c2b2f291 ("irqchip/qcom-pdc: Configure PDC to pass through mode")
+Reported-by: kernel test robot <lkp@intel.com>
+Signed-off-by: Thomas Gleixner <tglx@kernel.org>
+Closes: https://lore.kernel.org/oe-kbuild-all/202607081724.42MewVti-lkp@intel.com/
+(cherry picked from commit d307a7e7d9395875022ef89e6179118afb66eca8)
+(cherry picked from commit 0cdb4b900b532bf4db3137e4bc1464774b09f326)
+
+diff --git a/drivers/irqchip/qcom-pdc.c b/drivers/irqchip/qcom-pdc.c
+index f38ee74b03975779d03fb7da2633e02edeb215d1..ce6d80c7f17a3a942eff2e587ab19f5f95521106 100644
+--- a/drivers/irqchip/qcom-pdc.c
++++ b/drivers/irqchip/qcom-pdc.c
+@@ -426,7 +426,7 @@ static int qcom_pdc_gic_set_type(struct irq_data *d, unsigned int type)
+ }
+ 
+ /**
+- * qcom_pdc_gic_set_type: Configure PDC for the interrupt
++ * qcom_pdc_gic_secondary_set_type: Configure PDC for the interrupt in secondary mode
+  *
+  * @d:    the interrupt data
+  * @type: the interrupt type

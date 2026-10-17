@@ -1,0 +1,13 @@
+{
+  "upstream": "https://gitlab.freedesktop.org/pipewire/pipewire",
+  "mirror": "https://github.com/PipeWire/pipewire",
+  "version": "1.6.9",
+  "base_commit": "8fa27cabdc6c0c1350c69c026af5850ef0af1e26",
+  "source_directory": "src/gst",
+  "upstream_blob_manifest": "pipewire-gst/upstream.json",
+  "modified_files": {
+    "gstpipewirepool.c": "bcf816880ac7e7811fc5a39668e78e8898de9d196b221646c98975aec254d65a",
+    "gstpipewiresink.c": "fb53ba59b92924ca40873356644c057f526d3647ef9afe15fce676912dc23806"
+  },
+  "patch_sha256": "7265c112e1ebb631cfffef172ba42a757bd59ae0f135702c552d7f9f54332e3d"
+}

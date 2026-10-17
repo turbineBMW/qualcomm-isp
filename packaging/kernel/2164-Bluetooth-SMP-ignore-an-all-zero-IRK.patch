@@ -1,0 +1,42 @@
+From 71e4ed7a17cf32eb5119c5a5d977f60d378d16e7 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Tue, 13 Oct 2026 18:12:07 -0400
+Subject: [PATCH 2164/2165] Bluetooth: SMP: ignore an all-zero IRK
+
+The Security Manager specification defines an all-zero Identity
+Resolving Key as "the device does not have a valid resolvable private
+address" (Core Specification, Vol 3, Part H, 3.6.4). Such a key cannot
+resolve anything the peer sends.
+
+smp_cmd_ident_addr_info() stores it anyway. Every resolvable private
+address seen afterwards is then checked against the zero key, and about
+one in 2^24 of them matches by chance, making an unrelated device look
+like the bonded peer.
+
+Do not store an all-zero IRK. Key distribution continues as before, and
+the peer's other keys are kept under its connection address.
+
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit f0cb15f1b284226d22fcc92b48dd0d5c2d23b48c)
+
+diff --git a/net/bluetooth/smp.c b/net/bluetooth/smp.c
+index b0b0d25e3f8692d88027969d55e8238e10b2f503..513ad237611f8ce3529663f77df5b9af0eae0046 100644
+--- a/net/bluetooth/smp.c
++++ b/net/bluetooth/smp.c
+@@ -2678,6 +2678,15 @@ static int smp_cmd_ident_addr_info(struct l2cap_conn *conn,
+ 		goto distribute;
+ 	}
+ 
++	/* An all-zero IRK means the peer has no resolvable private address
++	 * (Core Specification, Vol 3, Part H, 3.6.4). Storing it would only
++	 * let unrelated resolvable private addresses match it by chance.
++	 */
++	if (!memchr_inv(smp->irk, 0, sizeof(smp->irk))) {
++		bt_dev_dbg(hcon->hdev, "ignoring all-zero IRK");
++		goto distribute;
++	}
++
+ 	bacpy(&smp->id_addr, &info->bdaddr);
+ 	smp->id_addr_type = info->addr_type;
+ 

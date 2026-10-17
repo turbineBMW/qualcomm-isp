@@ -1,0 +1,30 @@
+From ed753377616811d6988f6fd4a0af22c29ed7b6e7 Mon Sep 17 00:00:00 2001
+From: Nihal Kumar Gupta <nihal.gupta@oss.qualcomm.com>
+Date: Fri, 25 Sep 2026 11:18:47 +0530
+Subject: [PATCH 2312/2368] media: qcom: camss: Add Glymur compatible
+
+Glymur's camera subsystem hardware is a functional subset of X1E80100.
+TPG, CSID, VFE, CSID wrapper and ICC resources are shared; Glymur has
+three CSIPHY instances versus X1E80100's four.
+
+qcom,x1e80100-camss is not used as a fallback compatible since it is
+already claimed by its own binding schema, causing a duplicate
+compatible warning in the DT schema checker.
+
+Signed-off-by: Nihal Kumar Gupta <nihal.gupta@oss.qualcomm.com>
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
+(cherry picked from commit 09d6c30d3faeaeb376e550a1dda882a1928c8ce6)
+(cherry picked from commit 6b71b98b70c0fa9591312681af79ba4db80be649)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 3f8ec6c1ae65ed2a33ebeea81f031e2ca82c582f..e35b057ef99400430ed2385f49f87a0f9d34a3dd 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -5820,6 +5820,7 @@ static const struct of_device_id camss_dt_match[] = {
+ 	{ .compatible = "qcom,sm8550-camss", .data = &sm8550_resources },
+ 	{ .compatible = "qcom,sm8650-camss", .data = &sm8650_resources },
+ 	{ .compatible = "qcom,x1e80100-camss", .data = &x1e80100_resources },
++	{ .compatible = "qcom,glymur-camss", .data = &x1e80100_resources },
+ 	{ }
+ };
+ 

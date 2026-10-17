@@ -1,0 +1,72 @@
+From: Brandon Williams <turbine.bmw@gmail.com>
+Subject: [PATCH] gst: recover starved driving video and preserve frame timestamps
+
+Based on PipeWire 1.6.9, commit 8fa27cabdc6c0c1350c69c026af5850ef0af1e26, src/gst.
+MIT; original source notices retained.
+
+diff --git i/gstpipewirepool.c w/gstpipewirepool.c
+index 5e201d3151544547c59ecf10fff93259812ac1a7..50afa3fa0223969adfdfc7a364e9db31f7c63a6a 100644
+--- i/gstpipewirepool.c
++++ w/gstpipewirepool.c
+@@ -253,6 +253,7 @@ acquire_buffer (GstBufferPool * pool, GstBuffer ** buffer,
+   g_autoptr (GstPipeWireStream) s = g_weak_ref_get (&p->stream);
+   GstPipeWirePoolData *data;
+   struct pw_buffer *b;
++  gint64 deadline = 0;
+ 
+   if (G_UNLIKELY (!s))
+     return GST_FLOW_ERROR;
+@@ -277,7 +278,35 @@ acquire_buffer (GstBufferPool * pool, GstBuffer ** buffer,
+     }
+ 
+     GST_WARNING_OBJECT (pool, "failed to dequeue buffer: %s", strerror(errno));
+-    g_cond_wait (&p->cond, GST_OBJECT_GET_LOCK (pool));
++    if (GST_VIDEO_INFO_FPS_N (&p->video_info) > 0 &&
++        pw_stream_is_driving (s->pwstream)) {
++      /* A stopped consumer can exhaust the output pool. render() then
++       * cannot queue a buffer or trigger another graph cycle, including
++       * the cycle that returns buffers after the consumer resumes.
++       * The stream API requires drivers to retrigger unfinished cycles.
++       * Use three advertised video frame periods as the deadline. */
++      if (deadline == 0)
++        deadline = g_get_monotonic_time () + MAX ((gint64) 10000,
++            3 * (gint64) G_USEC_PER_SEC * GST_VIDEO_INFO_FPS_D (&p->video_info) /
++            GST_VIDEO_INFO_FPS_N (&p->video_info));
++      if (!g_cond_wait_until (&p->cond, GST_OBJECT_GET_LOCK (pool), deadline)) {
++        deadline = 0;
++        /* Do not take the PipeWire loop lock while holding the pool lock.
++         * State changes and buffer removal can acquire them in reverse. */
++        GST_OBJECT_UNLOCK (pool);
++        pw_thread_loop_lock (s->core->loop);
++        if (s->pwstream != NULL &&
++            pw_stream_get_state (s->pwstream, NULL) == PW_STREAM_STATE_STREAMING &&
++            pw_stream_is_driving (s->pwstream)) {
++          GST_DEBUG_OBJECT (pool, "retrigger starved video driver");
++          pw_stream_trigger_process (s->pwstream);
++        }
++        pw_thread_loop_unlock (s->core->loop);
++        GST_OBJECT_LOCK (pool);
++      }
++    } else {
++      g_cond_wait (&p->cond, GST_OBJECT_GET_LOCK (pool));
++    }
+   }
+ 
+   data = b->user_data;
+diff --git i/gstpipewiresink.c w/gstpipewiresink.c
+index 99235b1183c40a20239cefd44804ac8e2f75f1be..f0cd31e5a7e8e6eb6f17a1706fca474d5dc5333d 100644
+--- i/gstpipewiresink.c
++++ w/gstpipewiresink.c
+@@ -1087,6 +1087,12 @@ gst_pipewire_sink_render (GstBaseSink * bsink, GstBuffer * buffer)
+           GST_ERROR_OBJECT(pwsink, "Failed to copy the frame");
+           return GST_FLOW_ERROR;
+         }
++
++        /* gst_video_frame_copy() copies pixels only. Keep the timing and
++         * flags for SPA_META_Header and downstream recording, but retain
++         * the destination pool's memory/layout metadata. */
++        gst_buffer_copy_into (b, buffer,
++            GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS, 0, -1);
+       } else {
+         gst_buffer_map (b, &info, GST_MAP_WRITE);
+         gsize extract_size = (buf_size <= info.maxsize) ? buf_size: info.maxsize;

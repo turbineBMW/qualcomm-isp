@@ -1,0 +1,2017 @@
+From: Brandon Williams <turbine.bmw@gmail.com>
+Subject: [PATCH] cam: add capture leases; camss: align the validated ISP controls
+
+Based on aeae1f0c7155ae2a175f27b571496f87943197f9.
+Includes all six new source files and the source archive version marker.
+Existing per-file licenses and copyright notices apply.
+
+diff --git i/.tarball-version w/.tarball-version
+new file mode 100644
+index 0000000000000000000000000000000000000000..7486fdbc50b3f93d9d04db440483984df5d1dcce
+--- /dev/null
++++ w/.tarball-version
+@@ -0,0 +1 @@
++0.7.2
+diff --git i/include/libcamera/internal/v4l2_device.h w/include/libcamera/internal/v4l2_device.h
+index 8c4c59bf7773ba68242d16bea452a234c6e5029a..ec86dbf586222f23f3fa301b566fa56d64fd2f7c 100644
+--- i/include/libcamera/internal/v4l2_device.h
++++ w/include/libcamera/internal/v4l2_device.h
+@@ -48,6 +48,7 @@ public:
+ 
+ 	bool supportsFrameStartEvent();
+ 	int setFrameStartEnabled(bool enable);
++	uint64_t frameStartTimestamp() const { return frameStartTimestamp_; }
+ 	Signal<uint32_t> frameStart;
+ 
+ 	void updateControlInfo();
+@@ -91,6 +92,7 @@ private:
+ 
+ 	std::unique_ptr<EventNotifier> fdEventNotifier_;
+ 	bool frameStartEnabled_;
++	uint64_t frameStartTimestamp_ = 0;
+ };
+ 
+ } /* namespace libcamera */
+diff --git i/src/apps/cam/camera_session.cpp w/src/apps/cam/camera_session.cpp
+index 17444a217bec19ed95f523e60d7b12616201ee4b..186e294465c4040abfe7fcd97513facd74f81ebc 100644
+--- i/src/apps/cam/camera_session.cpp
++++ w/src/apps/cam/camera_session.cpp
+@@ -21,6 +21,8 @@
+ 
+ #include "capture_script.h"
+ #include "file_sink.h"
++#include "lease_sink.h"
++#include <cstdlib>
+ #ifdef HAVE_KMS
+ #include "kms_sink.h"
+ #endif
+@@ -318,6 +320,14 @@ int CameraSession::start()
+ 		sink_ = std::move(sink);
+ 	}
+ 
++	if (const char *path = std::getenv("LIBCAMERA_CAM_LEASE_SOCKET")) {
++		if (sink_) {
++			std::cerr << "Lease transport cannot be combined with another sink" << std::endl;
++			return -EINVAL;
++		}
++		sink_ = std::make_unique<LeaseSink>(path);
++	}
++
+ 	if (sink_) {
+ 		ret = sink_->configure(*config_);
+ 		if (ret < 0) {
+diff --git i/src/apps/cam/lease_sink.cpp w/src/apps/cam/lease_sink.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..ceda1364ea09b3449ffdba4ba9b2ff62fa1019bc
+--- /dev/null
++++ w/src/apps/cam/lease_sink.cpp
+@@ -0,0 +1,194 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#include "lease_sink.h"
++
++#include <algorithm>
++#include <cerrno>
++#include <cstring>
++#include <iomanip>
++#include <iostream>
++#include <sstream>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++#include <libcamera/camera.h>
++#include <libcamera/control_ids.h>
++#include <libcamera/formats.h>
++#include <libcamera/framebuffer.h>
++#include <libcamera/request.h>
++
++#include "../common/event_loop.h"
++
++using namespace libcamera;
++
++LeaseSink::LeaseSink(const std::string &path) : path_(path) {}
++LeaseSink::~LeaseSink() { stop(); }
++
++int LeaseSink::configure(const CameraConfiguration &config)
++{
++	if (config.size() != 1 || config.at(0).size != Size(3840, 2160) ||
++	    config.at(0).pixelFormat != formats::NV12 || config.at(0).stride != 3840 ||
++	    config.at(0).bufferCount < 4 || config.at(0).bufferCount > 16)
++		return -EINVAL;
++	return 0;
++}
++
++void LeaseSink::mapBuffer(FrameBuffer *buffer) { buffers_.push_back(buffer); }
++
++bool LeaseSink::send(const std::string &text, const std::vector<int> &fds)
++{
++	if (text.size() > 8192 || fds.size() > 2 || failed_)
++		return false;
++	iovec iov{ const_cast<char *>(text.data()), text.size() };
++	alignas(cmsghdr) char control[CMSG_SPACE(2 * sizeof(int))]{};
++	msghdr msg{};
++	msg.msg_iov = &iov;
++	msg.msg_iovlen = 1;
++	if (!fds.empty()) {
++		msg.msg_control = control;
++		msg.msg_controllen = CMSG_SPACE(fds.size() * sizeof(int));
++		cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
++		cmsg->cmsg_level = SOL_SOCKET;
++		cmsg->cmsg_type = SCM_RIGHTS;
++		cmsg->cmsg_len = CMSG_LEN(fds.size() * sizeof(int));
++		memcpy(CMSG_DATA(cmsg), fds.data(), fds.size() * sizeof(int));
++	}
++	ssize_t n;
++	do { n = sendmsg(fd_, &msg, MSG_NOSIGNAL | MSG_DONTWAIT); } while (n < 0 && errno == EINTR);
++	if (n != static_cast<ssize_t>(text.size())) {
++		fail("packet send failed (no buffer may be reused)");
++		return false;
++	}
++	return true;
++}
++
++void LeaseSink::fail(const char *reason)
++{
++	failed_ = true;
++	std::cerr << "LEASE_ERROR: " << reason << std::endl;
++	EventLoop::instance()->exit(-EIO);
++}
++
++int LeaseSink::start()
++{
++	if (buffers_.size() < 4 || buffers_.size() > 16)
++		return -EINVAL;
++	sockaddr_un addr{};
++	addr.sun_family = AF_UNIX;
++	if (path_.size() >= sizeof(addr.sun_path))
++		return -ENAMETOOLONG;
++	memcpy(addr.sun_path, path_.c_str(), path_.size() + 1);
++	fd_ = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
++	if (fd_ < 0)
++		return -errno;
++	if (connect(fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)))
++		return -errno;
++	for (unsigned int id = 0; id < buffers_.size(); ++id) {
++		const auto &planes = buffers_[id]->planes();
++		if (planes.size() != 2)
++			return -EINVAL;
++		std::ostringstream packet;
++		packet << "{\"type\":\"buffer\",\"id\":" << id << ",\"planes\":[";
++		std::vector<int> fds;
++		for (unsigned int i = 0; i < planes.size(); ++i) {
++			if (i) packet << ',';
++			packet << "{\"offset\":" << planes[i].offset
++			       << ",\"length\":" << planes[i].length << '}';
++			fds.push_back(planes[i].fd.get());
++		}
++		packet << "]}";
++		if (!send(packet.str(), fds)) return -EIO;
++	}
++	if (!send("{\"type\":\"start\",\"version\":1,\"width\":3840,\"height\":2160,\"stride\":3840,\"buffers\":" +
++		  std::to_string(buffers_.size()) + "}")) return -EIO;
++	EventLoop::instance()->addFdEvent(fd_, EventLoop::Read, [this]() { receive(); });
++	EventLoop::instance()->addTimerEvent(std::chrono::milliseconds(200), [this]() {
++		for (const auto &[id, lease] : leases_) {
++			if (std::chrono::steady_clock::now() - lease.since > std::chrono::seconds(3)) {
++				fail("unreleased capture buffer exceeded three seconds");
++				return;
++			}
++		}
++	});
++	return 0;
++}
++
++bool LeaseSink::processRequest(Request *request)
++{
++	if (failed_) return false;
++	FrameBuffer *buffer = request->buffers().begin()->second;
++	auto it = std::find(buffers_.begin(), buffers_.end(), buffer);
++	if (it == buffers_.end()) { fail("unregistered buffer"); return false; }
++	unsigned int id = it - buffers_.begin();
++	const auto &meta = buffer->metadata();
++	if (leases_.count(id) || meta.status != FrameMetadata::FrameSuccess ||
++	    meta.planes().size() != 2 || meta.planes()[0].bytesused != 3840 * 2160 ||
++	    meta.planes()[1].bytesused != 3840 * 1080) {
++		fail("invalid or already leased frame");
++		return false;
++	}
++	std::ostringstream packet;
++	packet << "{\"type\":\"frame\",\"id\":" << id << ",\"sequence\":" << meta.sequence
++	       << ",\"timestamp_ns\":" << meta.timestamp << ",\"metadata\":{";
++	bool first = true;
++	/* These controls have numeric/bool/array representations with no control
++	 * characters. Match cam's exact toString formatting for existing audits. */
++	for (const ControlId *key : std::initializer_list<const ControlId *>{ &controls::AeEnable, &controls::AwbEnable,
++		&controls::ExposureTime, &controls::AnalogueGain, &controls::DigitalGain,
++		&controls::ColourGains, &controls::SensorBlackLevels }) {
++		if (!request->metadata().contains(key->id())) continue;
++		if (!first) packet << ',';
++		first = false;
++		packet << std::quoted(key->name()) << ':'
++		       << std::quoted(request->metadata().get(key->id()).toString());
++	}
++	packet << "}}";
++	leases_.emplace(id, Lease{ request, meta.sequence, std::chrono::steady_clock::now() });
++	maxPending_ = std::max(maxPending_, leases_.size());
++	if (send(packet.str())) ++sent_;
++	return false; /* CameraSession must not requeue until receive() ACKs it. */
++}
++
++void LeaseSink::receive()
++{
++	for (;;) {
++		char packet[128];
++		ssize_t n = recv(fd_, packet, sizeof(packet), MSG_DONTWAIT | MSG_TRUNC);
++		if (n < 0 && errno == EINTR) continue;
++		if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
++		if (n <= 0 || n >= static_cast<ssize_t>(sizeof(packet))) {
++			fail("lease peer disconnected or invalid packet"); return;
++		}
++		std::istringstream in(std::string(packet, n));
++		std::string magic, extra;
++		unsigned int id;
++		uint64_t seq;
++		if (!(in >> magic >> id >> seq) || magic != "ACK1" || (in >> extra)) {
++			fail("malformed release"); return;
++		}
++		auto it = leases_.find(id);
++		if (it == leases_.end() || it->second.sequence != seq) {
++			fail("stale or unknown release"); return;
++		}
++		Request *request = it->second.request;
++		leases_.erase(it);
++		++released_;
++		requestProcessed.emit(request);
++	}
++}
++
++int LeaseSink::stop()
++{
++	if (fd_ < 0) return 0;
++	/* CameraSession stops hardware first. Outstanding leases are never
++	 * requeued here; descriptor references keep allocations alive in peer. */
++	std::ostringstream end;
++	end << "{\"type\":\"end\",\"sent\":" << sent_ << ",\"released\":" << released_
++	    << ",\"pending\":" << leases_.size() << ",\"max_pending\":" << maxPending_
++	    << ",\"failed\":" << (failed_ ? "true" : "false") << '}';
++	if (!failed_) send(end.str());
++	close(fd_);
++	fd_ = -1;
++	leases_.clear();
++	return failed_ ? -EIO : 0;
++}
+diff --git i/src/apps/cam/lease_sink.h w/src/apps/cam/lease_sink.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..bf0be689b26851e17325c4485728f36a11cde1b4
+--- /dev/null
++++ w/src/apps/cam/lease_sink.h
+@@ -0,0 +1,40 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#pragma once
++
++#include <chrono>
++#include <map>
++#include <string>
++#include <vector>
++
++#include "frame_sink.h"
++
++/* Private lab transport. Completion grants a CPU-read lease; only a matching
++ * ACK permits request reuse. No IPE import or implicit fencing is claimed. */
++class LeaseSink : public FrameSink
++{
++public:
++	explicit LeaseSink(const std::string &path);
++	~LeaseSink();
++	int configure(const libcamera::CameraConfiguration &config) override;
++	void mapBuffer(libcamera::FrameBuffer *buffer) override;
++	int start() override;
++	int stop() override;
++	bool processRequest(libcamera::Request *request) override;
++
++private:
++	struct Lease {
++		libcamera::Request *request;
++		uint64_t sequence;
++		std::chrono::steady_clock::time_point since;
++	};
++	bool send(const std::string &text, const std::vector<int> &fds = {});
++	void receive();
++	void fail(const char *reason);
++	std::string path_;
++	int fd_ = -1;
++	bool failed_ = false;
++	std::vector<libcamera::FrameBuffer *> buffers_;
++	std::map<unsigned int, Lease> leases_;
++	uint64_t sent_ = 0, released_ = 0;
++	size_t maxPending_ = 0;
++};
+diff --git i/src/apps/cam/meson.build w/src/apps/cam/meson.build
+index efd4c268db5665d10431738fd517ba22e0a091ec..43a674e765ab16d92b454a4be14f07d65a80b1b9 100644
+--- i/src/apps/cam/meson.build
++++ w/src/apps/cam/meson.build
+@@ -13,6 +13,7 @@ cam_sources = files([
+     'camera_session.cpp',
+     'capture_script.cpp',
+     'file_sink.cpp',
++    'lease_sink.cpp',
+     'frame_sink.cpp',
+     'main.cpp',
+ ])
+diff --git i/src/libcamera/pipeline/camss/camss.cpp w/src/libcamera/pipeline/camss/camss.cpp
+index 99899544d0d1a56ff4c3c791d715d7d45a7fdf1f..54e41b83877cc7bebd594d2c0e1e592b1f7a44f9 100644
+--- i/src/libcamera/pipeline/camss/camss.cpp
++++ w/src/libcamera/pipeline/camss/camss.cpp
+@@ -666,6 +666,10 @@ void CamssCameraData::ispParameterBufferReady(FrameBuffer *buffer)
+  */
+ void CamssCameraData::csiBufferReady(FrameBuffer *buffer)
+ {
++	/* Inline RAW statistics buffers are internal, without application requests. */
++	if (isp_->isInline())
++		return;
++
+ 	CamssFrames::Info *info = frameInfos_.find(buffer);
+ 	if (!info)
+ 		return;
+diff --git i/src/libcamera/pipeline/camss/camss_bayer_awb.h w/src/libcamera/pipeline/camss/camss_bayer_awb.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..38fd9e006d74c912d7ecbe326870418a9e6a2483
+--- /dev/null
++++ w/src/libcamera/pipeline/camss/camss_bayer_awb.h
+@@ -0,0 +1,355 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Conservative session-reference Bayer AWB experiment. */
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++#include <utility>
++#include <vector>
++
++namespace libcamera {
++
++class CamssBayerAwb
++{
++public:
++	static constexpr unsigned int kColumns = 32;
++	static constexpr unsigned int kRows = 18;
++	struct Tile {
++		unsigned int count = 0;
++		unsigned int valid = 0;
++		std::array<uint64_t, 4> sum{}; /* black-subtracted R, Gr, Gb, B */
++	};
++	using Stats = std::array<Tile, kColumns * kRows>;
++	struct Result {
++		std::array<double, 2> gains{};
++		unsigned int selected = 0;
++		bool accepted = false;
++		const char *reason = "insufficient-neutral-support";
++		double cct = 0; /* locus mode: interpolated reference CCT */
++	};
++	struct LocusPoint {
++		double cct;
++		std::array<double, 2> logGains; /* log(G/R), log(G/B) of a neutral patch */
++	};
++
++	bool configure(const std::array<double, 2> &reference)
++	{
++		for (double g : reference)
++			if (!std::isfinite(g) || g < 0.25 || g > 4.0)
++				return false;
++		reference_ = reference;
++		anchored_ = true;
++		reset();
++		return true;
++	}
++
++	void reset() { stable_ = 0; }
++	const std::array<double, 2> &reference() const { return reference_; }
++
++	/*
++	 * Illuminant-locus mode. `flat` holds (cct, R/G, B/G) triples of neutral
++	 * references for this sensor. Tiles within `width` (log units) of the
++	 * polyline through those points, in CCT order, count as neutral
++	 * candidates; the estimate is the locus point at their median position.
++	 * When a measured session reference was configured, the locus is shifted
++	 * so it passes through that point at `anchorCct` (a module calibration
++	 * in place of OTP data). `warmth` keeps a share of a warm light's colour
++	 * below `warmCct`, growing linearly towards 2300 K.
++	 */
++	bool configureLocus(const std::vector<double> &flat, double width, double anchorCct,
++			    double warmth, double warmCct, double minGreen, double warmthBlue = -1)
++	{
++		if (warmthBlue < 0)
++			warmthBlue = warmth;
++		if (flat.size() < 6 || flat.size() % 3 || !(width > 0.01 && width < 0.5) ||
++		    !(minGreen >= 1) || !(warmth >= 0 && warmth <= 1) || !(warmthBlue >= 0 && warmthBlue <= 1) ||
++		    !(warmCct > 2300))
++			return false;
++		std::vector<LocusPoint> points;
++		for (unsigned int i = 0; i < flat.size(); i += 3) {
++			double cct = flat[i], rg = flat[i + 1], bg = flat[i + 2];
++			if (!(cct >= 1000 && cct <= 20000) || !(rg > 0.05 && rg < 20) || !(bg > 0.05 && bg < 20))
++				return false;
++			points.push_back({ cct, { std::log(1 / rg), std::log(1 / bg) } });
++		}
++		std::sort(points.begin(), points.end(),
++			  [](const LocusPoint &a, const LocusPoint &b) { return a.cct > b.cct; });
++		for (unsigned int i = 1; i < points.size(); i++)
++			if (points[i].cct == points[i - 1].cct)
++				return false;
++		if (anchored_) {
++			/* Shift so the locus passes through the measured neutral at anchorCct. */
++			std::array<double, 2> at = interpolate(points, position(points, anchorCct));
++			for (auto &pt : points)
++				for (unsigned int c = 0; c < 2; c++)
++					pt.logGains[c] += std::log(reference_[c]) - at[c];
++		}
++		locus_ = std::move(points);
++		locusWidth_ = width;
++		warmth_ = warmth;
++		warmthBlue_ = warmthBlue;
++		warmCct_ = warmCct;
++		minGreen_ = minGreen;
++		reset();
++		return true;
++	}
++
++	/*
++	 * Warmth as a function of CCT: (cct, redShare, blueShare) triples,
++	 * linearly interpolated, replacing the scalar warmth ramp. The shares
++	 * were fitted against the reference camera: it keeps little of a pure
++	 * tungsten cast but, in mixed window-plus-tungsten light, renders much
++	 * closer to the daylight reference than the locus median suggests.
++	 */
++	bool configureWarmthTable(const std::vector<double> &flat)
++	{
++		if (flat.empty()) {
++			warmthTable_.clear();
++			return true;
++		}
++		if (flat.size() < 6 || flat.size() % 3)
++			return false;
++		std::vector<std::array<double, 3>> table;
++		for (unsigned int i = 0; i < flat.size(); i += 3) {
++			if (!(flat[i] >= 1000 && flat[i] <= 20000) || !(flat[i + 1] >= 0 && flat[i + 1] <= 1) ||
++			    !(flat[i + 2] >= 0 && flat[i + 2] <= 1))
++				return false;
++			table.push_back({ flat[i], flat[i + 1], flat[i + 2] });
++		}
++		std::sort(table.begin(), table.end(), [](const auto &a, const auto &b) { return a[0] < b[0]; });
++		warmthTable_ = std::move(table);
++		return true;
++	}
++
++	std::array<double, 2> warmthAt(double cct) const
++	{
++		if (warmthTable_.empty()) {
++			double ramp = cct < warmCct_ ? std::clamp((warmCct_ - cct) / (warmCct_ - 2300.0), 0.0, 1.0) : 0.0;
++			return { warmth_ * ramp, warmthBlue_ * ramp };
++		}
++		const auto &t = warmthTable_;
++		if (cct <= t.front()[0])
++			return { t.front()[1], t.front()[2] };
++		if (cct >= t.back()[0])
++			return { t.back()[1], t.back()[2] };
++		for (unsigned int i = 1; i < t.size(); i++)
++			if (cct <= t[i][0]) {
++				double u = (cct - t[i - 1][0]) / (t[i][0] - t[i - 1][0]);
++				return { t[i - 1][1] * (1 - u) + t[i][1] * u, t[i - 1][2] * (1 - u) + t[i][2] * u };
++			}
++		return { 0, 0 };
++	}
++
++	bool locusMode() const { return !locus_.empty(); }
++	bool anchored() const { return anchored_; }
++
++	Result process(const Stats &stats, const std::array<double, 2> &current)
++	{
++		if (locusMode())
++			return processLocus(stats, current);
++		Result result;
++		result.gains = current;
++		std::array<std::vector<double>, 2> samples;
++		unsigned int minX = kColumns, minY = kRows, maxX = 0, maxY = 0;
++		for (unsigned int i = 0; i < stats.size(); i++) {
++			const Tile &t = stats[i];
++			if (!t.count || t.valid * 5 < t.count * 4 || !t.valid)
++				continue;
++			double r = t.sum[0], g = (t.sum[1] + t.sum[2]) / 2.0, b = t.sum[3];
++			if (r <= 0 || b <= 0 || g / t.valid < 64 ||
++			    std::abs(static_cast<double>(t.sum[1]) - t.sum[2]) > g * 0.05)
++				continue;
++			std::array<double, 2> gains = { g / r, g / b };
++			/* A session neutral reference, not a universal illuminant locus. */
++			if (std::abs(std::log(gains[0] / reference_[0])) > 0.06 ||
++			    std::abs(std::log(gains[1] / reference_[1])) > 0.06)
++				continue;
++			for (unsigned int c = 0; c < 2; c++)
++				samples[c].push_back(std::log(gains[c]));
++			minX = std::min(minX, i % kColumns);
++			maxX = std::max(maxX, i % kColumns);
++			minY = std::min(minY, i / kColumns);
++			maxY = std::max(maxY, i / kColumns);
++		}
++		result.selected = samples[0].size();
++		if (result.selected < 16 || maxX - minX + 1 < 4 || maxY - minY + 1 < 3) {
++			reset();
++			return result;
++		}
++		std::array<double, 2> target;
++		for (unsigned int c = 0; c < 2; c++) {
++			auto &values = samples[c];
++			std::sort(values.begin(), values.end());
++			double median = (values[(values.size() - 1) / 2] + values[values.size() / 2]) / 2;
++			for (double &v : values)
++				v = std::abs(v - median);
++			std::sort(values.begin(), values.end());
++			if (values[(values.size() - 1) * 9 / 10] > 0.03) {
++				reset();
++				result.reason = "inconsistent-neutral-colours";
++				return result;
++			}
++			target[c] = std::exp(median);
++			if (std::abs(std::log(target[c] / reference_[c])) > 0.05) {
++				reset();
++				result.reason = "outside-session-reference";
++				return result;
++			}
++		}
++		if (!stable_ || std::abs(std::log(target[0] / previous_[0])) > 0.02 ||
++		    std::abs(std::log(target[1] / previous_[1])) > 0.02)
++			stable_ = 1;
++		else
++			stable_ = std::min(stable_ + 1, 3u);
++		previous_ = target;
++		if (stable_ < 3) {
++			result.reason = "waiting-for-stable-neutral";
++			return result;
++		}
++		for (unsigned int c = 0; c < 2; c++) {
++			double step = std::clamp(0.2 * std::log(target[c] / current[c]), -0.02, 0.02);
++			result.gains[c] = std::clamp(current[c] * std::exp(step), 0.25, 4.0);
++		}
++		result.accepted = true;
++		result.reason = "neutral-tracking";
++		return result;
++	}
++
++private:
++	/* Continuous position along the locus polyline: index + fraction. */
++	static double position(const std::vector<LocusPoint> &points, double cct)
++	{
++		if (cct >= points.front().cct)
++			return 0;
++		for (unsigned int i = 1; i < points.size(); i++)
++			if (cct >= points[i].cct)
++				return i - 1 + (points[i - 1].cct - cct) / (points[i - 1].cct - points[i].cct);
++		return points.size() - 1;
++	}
++
++	static std::array<double, 2> interpolate(const std::vector<LocusPoint> &points, double t)
++	{
++		t = std::clamp(t, 0.0, points.size() - 1.0);
++		unsigned int i = std::min<unsigned int>(static_cast<unsigned int>(t), points.size() - 2);
++		double u = t - i;
++		return { points[i].logGains[0] * (1 - u) + points[i + 1].logGains[0] * u,
++			 points[i].logGains[1] * (1 - u) + points[i + 1].logGains[1] * u };
++	}
++
++	static double cctAt(const std::vector<LocusPoint> &points, double t)
++	{
++		t = std::clamp(t, 0.0, points.size() - 1.0);
++		unsigned int i = std::min<unsigned int>(static_cast<unsigned int>(t), points.size() - 2);
++		double u = t - i;
++		return points[i].cct * (1 - u) + points[i + 1].cct * u;
++	}
++
++	/* Nearest point on the polyline to a tile colour: distance and position. */
++	std::pair<double, double> nearest(const std::array<double, 2> &lg) const
++	{
++		double best = 1e9, bestT = 0;
++		for (unsigned int i = 0; i + 1 < locus_.size(); i++) {
++			const auto &a = locus_[i].logGains, &b = locus_[i + 1].logGains;
++			double dx = b[0] - a[0], dy = b[1] - a[1];
++			double len = dx * dx + dy * dy;
++			double u = len > 0 ? std::clamp(((lg[0] - a[0]) * dx + (lg[1] - a[1]) * dy) / len, 0.0, 1.0) : 0;
++			double px = a[0] + u * dx - lg[0], py = a[1] + u * dy - lg[1];
++			double d = std::sqrt(px * px + py * py);
++			if (d < best) {
++				best = d;
++				bestT = i + u;
++			}
++		}
++		return { best, bestT };
++	}
++
++	Result processLocus(const Stats &stats, const std::array<double, 2> &current)
++	{
++		Result result;
++		result.gains = current;
++		std::vector<double> positions;
++		unsigned int minX = kColumns, minY = kRows, maxX = 0, maxY = 0;
++		for (unsigned int i = 0; i < stats.size(); i++) {
++			const Tile &t = stats[i];
++			if (!t.count || t.valid * 5 < t.count * 4 || !t.valid)
++				continue;
++			double r = t.sum[0], g = (t.sum[1] + t.sum[2]) / 2.0, b = t.sum[3];
++			if (r <= 0 || b <= 0 || g / t.valid < minGreen_ ||
++			    std::abs(static_cast<double>(t.sum[1]) - t.sum[2]) > g * 0.05)
++				continue;
++			auto [distance, position] = nearest({ std::log(g / r), std::log(g / b) });
++			if (distance > locusWidth_)
++				continue;
++			positions.push_back(position);
++			minX = std::min(minX, i % kColumns);
++			maxX = std::max(maxX, i % kColumns);
++			minY = std::min(minY, i / kColumns);
++			maxY = std::max(maxY, i / kColumns);
++		}
++		result.selected = positions.size();
++		if (result.selected < 16 || maxX - minX + 1 < 4 || maxY - minY + 1 < 3) {
++			reset();
++			return result;
++		}
++		std::sort(positions.begin(), positions.end());
++		double median = (positions[(positions.size() - 1) / 2] + positions[positions.size() / 2]) / 2;
++		std::vector<double> spread;
++		for (double v : positions)
++			spread.push_back(std::abs(v - median));
++		std::sort(spread.begin(), spread.end());
++		/* More than one illuminant-like colour cluster (window daylight plus
++		 * tungsten): holding would keep whatever gains the session started
++		 * with. Move towards the median at half speed instead, as a mixed
++		 * light has no single right answer and the middle is what the
++		 * reference camera renders. */
++		bool mixed = spread[(spread.size() - 1) * 9 / 10] > 1.5;
++		std::array<double, 2> target = interpolate(locus_, median);
++		result.cct = cctAt(locus_, median);
++		{
++			/* Keep part of the cast: move each channel's gain part of the
++			 * way back to the daylight reference. The blue share is
++			 * separate because the colour matrix amplifies blue changes
++			 * more than red ones in the rendered image. */
++			std::array<double, 2> share = warmthAt(result.cct);
++			std::array<double, 2> neutral = anchored_ ? std::array<double, 2>{ std::log(reference_[0]), std::log(reference_[1]) }
++								: interpolate(locus_, position(locus_, 5000));
++			target[0] += share[0] * (neutral[0] - target[0]);
++			target[1] += share[1] * (neutral[1] - target[1]);
++		}
++		std::array<double, 2> goal = { std::exp(target[0]), std::exp(target[1]) };
++		if (!stable_ || std::abs(std::log(goal[0] / previous_[0])) > 0.03 ||
++		    std::abs(std::log(goal[1] / previous_[1])) > 0.03)
++			stable_ = 1;
++		else
++			stable_ = std::min(stable_ + 1, 3u);
++		previous_ = goal;
++		if (stable_ < 3) {
++			result.reason = "waiting-for-stable-neutral";
++			return result;
++		}
++		double limit = mixed ? 0.025 : 0.05;
++		for (unsigned int c = 0; c < 2; c++) {
++			double step = std::clamp((mixed ? 0.15 : 0.3) * std::log(goal[c] / current[c]), -limit, limit);
++			result.gains[c] = std::clamp(current[c] * std::exp(step), 0.25, 4.0);
++		}
++		result.accepted = true;
++		result.reason = mixed ? "mixed-illuminants" : "locus-tracking";
++		return result;
++	}
++
++	std::array<double, 2> reference_{ 1, 1 };
++	std::array<double, 2> previous_{ 1, 1 };
++	unsigned int stable_ = 0;
++	bool anchored_ = false;
++	std::vector<LocusPoint> locus_;
++	double locusWidth_ = 0.12;
++	double warmth_ = 0;
++	double warmthBlue_ = 0;
++	std::vector<std::array<double, 3>> warmthTable_;
++	double warmCct_ = 4500;
++	double minGreen_ = 64;
++};
++
++} /* namespace libcamera */
+diff --git i/src/libcamera/pipeline/camss/camss_csi.cpp w/src/libcamera/pipeline/camss/camss_csi.cpp
+index 83e8f2e703c8d4fc97812bfaa4ad74b0b7f0e1f3..279ddcb10d334de0f01a6eb025fbe97884538d3a 100644
+--- i/src/libcamera/pipeline/camss/camss_csi.cpp
++++ w/src/libcamera/pipeline/camss/camss_csi.cpp
+@@ -306,7 +306,7 @@ int CamssCsiCamera::configure(const StreamConfiguration &cfg, const Transform &t
+ 
+ 	for (unsigned int i = 0; i < LinkCount; i++) {
+ 		auto &link = links_[i];
+-		bool enable = rawCapture_ || i != CsidVfeLink;
++		bool enable = rawCapture_ || statsCapture_ || i != CsidVfeLink;
+ 
+ 		if (enable != !!(link.link->flags() & MEDIA_LNK_FL_ENABLED)) {
+ 			ret = link.link->setEnabled(enable);
+@@ -324,7 +324,7 @@ int CamssCsiCamera::configure(const StreamConfiguration &cfg, const Transform &t
+ 	}
+ 
+ 	bufferCount_ = cfg.bufferCount;
+-	if (!rawCapture_)
++	if (!rawCapture_ && !statsCapture_)
+ 		return 0;
+ 
+ 	outputFormat.fourcc = mbusCodeToV4L2PixelFormat(sensorFormat.code);
+diff --git i/src/libcamera/pipeline/camss/camss_csi.h w/src/libcamera/pipeline/camss/camss_csi.h
+index 9713091fad088882ddb168273a9ba80c66c1fb07..8644d0793a487656e937eba47556111291e251cf 100644
+--- i/src/libcamera/pipeline/camss/camss_csi.h
++++ w/src/libcamera/pipeline/camss/camss_csi.h
+@@ -53,6 +53,8 @@ public:
+ 	void setIsp(CamssIsp *isp) { isp_ = isp; }
+ 	/* Raw capture through the RDI is off when an inline ISP owns the output */
+ 	void setRawCapture(bool enable) { rawCapture_ = enable; }
++	void setStatsCapture(bool enable) { statsCapture_ = enable; }
++	V4L2VideoDevice *rawOutput() { return output_.get(); }
+ 	/* The pixel path (IFE PIX line), present on SoCs whose camss exposes it */
+ 	bool hasPix() const { return pixLink_ != nullptr; }
+ 	MediaLink *pixLink() { return pixLink_; }
+@@ -110,6 +112,7 @@ private:
+ 	std::unique_ptr<V4L2Subdevice> pixSubdev_;
+ 	std::unique_ptr<V4L2VideoDevice> pixOutput_;
+ 	bool rawCapture_ = true;
++	bool statsCapture_ = false;
+ 	std::array<linkInfo, LinkCount> links_;
+ 	CamssIsp *isp_;
+ 
+diff --git i/src/libcamera/pipeline/camss/camss_highlight_ae.h w/src/libcamera/pipeline/camss/camss_highlight_ae.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..ecf4c237ab3f429188ebc7a51a011d67c06751a5
+--- /dev/null
++++ w/src/libcamera/pipeline/camss/camss_highlight_ae.h
+@@ -0,0 +1,117 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Experimental native-4K RAW highlight constraint for the inline AE loop. */
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++
++namespace libcamera {
++
++class CamssHighlightAe
++{
++public:
++	using Histogram = std::array<std::array<unsigned int, 1024>, 4>;
++	struct Stats {
++		Histogram full{};
++		Histogram centre{}; /* middle half of each native-4K axis */
++	};
++	struct Result {
++		bool valid = false;
++		double peak = 0;
++		double saturated = 0;
++		double photometric = 1;
++		double scale = 1;
++		double centrePeak = 0;
++		double centreSaturated = 0;
++	};
++
++	/* Call only with paired, fresh pixels and their applied controls. The
++	 * caller owns cadence, sensor settling and manual-control precedence. */
++	static Result evaluate(const Histogram &hist, const std::array<double, 2> &wb,
++			       double meanY, double targetY, unsigned int samples = 129600,
++			       double percentileFraction = 0.995, double clippingBudget = 0.001,
++			       double peakTarget = 0.80)
++	{
++		Result result;
++		if (!std::isfinite(meanY) || !std::isfinite(targetY) ||
++		    meanY < 0 || meanY > 255 || targetY <= 0 || targetY > 255 ||
++		    !samples || !std::isfinite(percentileFraction) ||
++		    percentileFraction <= 0 || percentileFraction > 1 ||
++		    !std::isfinite(clippingBudget) || clippingBudget <= 0 || clippingBudget > 0.05 ||
++		    !std::isfinite(peakTarget) || peakTarget < 0.5 || peakTarget > 0.98)
++			return result;
++		for (double gain : wb)
++			if (!std::isfinite(gain) || gain < 0.25 || gain > 4)
++				return result;
++		std::array<double, 4> gains = { wb[0], 1, 1, wb[1] };
++		for (unsigned int c = 0; c < 4; c++) {
++			uint64_t count = 0, saturated = 0;
++			unsigned int percentile = 0;
++			for (unsigned int code = 0; code < 1024; code++) {
++				count += hist[c][code];
++				if (count < static_cast<uint64_t>(std::ceil(samples * percentileFraction)))
++					percentile = code + 1;
++				if (code >= 1020)
++					saturated += hist[c][code];
++			}
++			if (count != samples)
++				return result;
++			result.peak = std::max(result.peak,
++				std::max(static_cast<int>(percentile) - 64, 0) * gains[c] / 1024.0);
++			result.saturated = std::max(result.saturated, saturated / static_cast<double>(samples));
++		}
++		/* Retain the existing luma feedback model; the RAW ceiling is in
++		 * linear sensor units. Neither is a reconstruction of Windows AE. */
++		result.photometric = std::clamp(std::pow(targetY / std::max(meanY, 1.0), 1.32), 0.5, 2.0);
++		if (std::abs(std::log(result.photometric)) < 0.02)
++			result.photometric = 1;
++		/* Hold within 2.5% of the peak target; otherwise scale towards it. */
++		double ceiling = result.peak >= peakTarget * 0.975 && result.peak <= peakTarget * 1.025
++			? 1.0 : peakTarget / std::max(result.peak, 0.001);
++		/* Approach the 0.1% clipping budget continuously. The old fixed
++		 * 30% cut at that boundary repeatedly darkened backlit scenes,
++		 * then let photometric AE grow exposure straight back again.
++		 * Hold in a small band; use a damped correction above it. */
++		if (result.saturated >= clippingBudget * 0.8) {
++			double clipping = result.saturated <= clippingBudget * 1.2 ? 1.0
++				: std::pow(clippingBudget / result.saturated, 0.25);
++			ceiling = std::min(ceiling, clipping);
++		}
++		/* Fine tracking steps stay at 12%; a start far below target (more
++		 * than half a stop) may take 50% steps so a dark room converges in
++		 * a few updates instead of thirty. The highlight ceiling still caps
++		 * every step. */
++		double upper = result.photometric > 1.5 ? 1.5 : 1.12;
++		result.scale = std::clamp(std::min(result.photometric, ceiling), 0.5, upper);
++		result.valid = true;
++		return result;
++	}
++
++	static Result evaluate(const Stats &stats, const std::array<double, 2> &wb,
++			       double meanY, double targetY, bool centrePriority,
++			       double peakTarget = 0.80, double peripheralClipping = 0.01,
++			       double centreClipping = 0.001, double centrePercentile = 0.995)
++	{
++		if (!centrePriority)
++			return evaluate(stats.full, wb, meanY, targetY, 129600, 0.995, 0.001, peakTarget);
++		for (unsigned int c = 0; c < 4; c++)
++			for (unsigned int b = 0; b < 1024; b++)
++				if (stats.centre[c][b] > stats.full[c][b])
++					return {};
++		/* This is a centre-priority policy, not face detection. Allow a
++		 * limited bright peripheral area while retaining strict central
++		 * protection and a whole-frame ceiling. Missing centre data must
++		 * never silently relax the conservative limit. */
++		auto whole = evaluate(stats.full, wb, meanY, targetY, 129600, 0.98, peripheralClipping, peakTarget);
++		auto centre = evaluate(stats.centre, wb, meanY, targetY, 32400, centrePercentile, centreClipping, peakTarget);
++		whole.valid = whole.valid && centre.valid;
++		whole.centrePeak = centre.peak;
++		whole.centreSaturated = centre.saturated;
++		whole.scale = whole.valid ? std::min(whole.scale, centre.scale) : 1;
++		return whole;
++	}
++};
++
++} /* namespace libcamera */
+diff --git i/src/libcamera/pipeline/camss/camss_isp_inline.cpp w/src/libcamera/pipeline/camss/camss_isp_inline.cpp
+index 421bf4a3d843f52e22efb51a792e0f789d518e1e..4d92462504330a0c648ef7e4bd0c2a88f8480bb4 100644
+--- i/src/libcamera/pipeline/camss/camss_isp_inline.cpp
++++ w/src/libcamera/pipeline/camss/camss_isp_inline.cpp
+@@ -24,6 +24,7 @@
+ 
+ #include <libcamera/base/file.h>
+ #include <libcamera/base/log.h>
++#include <libcamera/base/utils.h>
+ 
+ #include <libcamera/control_ids.h>
+ #include <libcamera/formats.h>
+@@ -40,6 +41,7 @@
+ #include "libcamera/internal/yaml_parser.h"
+ 
+ #include "camss_csi.h"
++#include "camss_raw_stats.h"
+ #include "camss_frames.h"
+ #include "camss_util.h"
+ 
+@@ -258,6 +260,11 @@ CamssIspInline::CamssIspInline(CamssCsiCamera *csi, CamssFrames *frameInfos)
+ 	spatialActive_ = true;
+ 	centreWeight_ = kCentreWeight;
+ 	slowFrame_ = kSlowFrame;
++	gainKnee_ = kGainKnee;
++	highlightPeak_ = 0.80;
++	peripheralClipping_ = 0.01;
++	centreClipping_ = 0.001;
++	centrePercentile_ = 0.995;
+ 	sensorDigitalMax_ = 1.0;
+ 	hasSensorDigital_ = ctrls.find(V4L2_CID_DIGITAL_GAIN) != ctrls.end();
+ 	awbWarmth_ = 0.0;
+@@ -266,7 +273,20 @@ CamssIspInline::CamssIspInline(CamssCsiCamera *csi, CamssFrames *frameInfos)
+ 	awbBlueBias_ = 1.0;
+ 	loadTuning();
+ 
++	const char *stats = std::getenv("LIBCAMERA_CAMSS_RAW_STATS");
++	if (stats && *stats && sensor_->model() == "imx681") {
++		csi_->setStatsCapture(true);
++		rawStats_ = std::make_unique<CamssRawStats>(csi_->rawOutput(), stats);
++		if (highlightAeEnabled_)
++			rawStats_->histogramReady.connect(this, &CamssIspInline::histogramReady);
++		if (bayerAwbEnabled_) {
++			rawStats_->enableAwbStats();
++			rawStats_->statsReady.connect(this, &CamssIspInline::bayerStatsReady);
++		}
++	}
++
+ 	output_->bufferReady.connect(this, &CamssIspInline::bufferReady);
++	pix_->frameStart.connect(this, &CamssIspInline::frameStart);
+ 	valid_ = true;
+ }
+ 
+@@ -325,10 +345,52 @@ void CamssIspInline::loadTuning()
+ 	targetLuma_ = ae["target"].get<double>().value_or(kTargetLuma);
+ 	centreWeight_ = ae["centre_weight"].get<double>().value_or(kCentreWeight);
+ 	slowFrame_ = std::max(ae["slow_frame"].get<double>().value_or(kSlowFrame), 1.0);
++	/* Analogue gain reached at one frame length before the frame grows. */
++	double kneeGain = std::clamp(ae["slow_frame_gain"].get<double>().value_or(gainFromCode(kGainKnee)), 1.0, 16.0);
++	gainKnee_ = std::min<int32_t>(gainToCode(kneeGain), gainMax_);
+ 	sensorDigitalMax_ = std::clamp(ae["sensor_digital_max"].get<double>().value_or(1.0), 1.0, 15.0);
++	if (ae.contains("raw_highlights")) {
++		auto enabled = ae["raw_highlights"].get<bool>();
++		highlightAeConfigValid_ = enabled.has_value();
++		highlightAeEnabled_ = enabled.value_or(false);
++	}
++	/* Highlight ceiling: the RAW 99.5th percentile the loop aims at, and the
++	 * whole-frame clipping budget tolerated in centre-priority mode. */
++	highlightPeak_ = std::clamp(ae["highlight_peak"].get<double>().value_or(0.80), 0.5, 0.98);
++	peripheralClipping_ = std::clamp(ae["peripheral_clipping"].get<double>().value_or(0.01), 0.001, 0.05);
++	centreClipping_ = std::clamp(ae["centre_clipping"].get<double>().value_or(0.001), 0.0005, 0.02);
++	centrePercentile_ = std::clamp(ae["centre_percentile"].get<double>().value_or(0.995), 0.9, 0.999);
++	if (ae.contains("raw_centre_priority")) {
++		auto enabled = ae["raw_centre_priority"].get<bool>();
++		highlightAeConfigValid_ &= enabled.has_value();
++		centrePriority_ = enabled.value_or(false);
++	}
+ 	const ValueNode &awb = (*root)["awb"];
+ 	awbRedBias_ = awb["red_bias"].get<double>().value_or(1.0);
+ 	awbBlueBias_ = awb["blue_bias"].get<double>().value_or(1.0);
++	if (awb.contains("raw_reference_gains")) {
++		auto gains = awb["raw_reference_gains"].get<std::vector<double>>();
++		bayerAwbConfigValid_ = gains && gains->size() == 2 &&
++			bayerAwb_.configure({ (*gains)[0], (*gains)[1] });
++		bayerAwbEnabled_ = bayerAwbConfigValid_;
++	}
++	if (awb.contains("locus")) {
++		/* (cct, R/G, B/G) triples of neutral references; see CamssBayerAwb. */
++		auto flat = awb["locus"].get<std::vector<double>>();
++		bool ok = flat && bayerAwb_.configureLocus(*flat,
++			awb["locus_width"].get<double>().value_or(0.12),
++			awb["locus_anchor_cct"].get<double>().value_or(5000.0),
++			awb["locus_warmth"].get<double>().value_or(0.0),
++			awb["locus_warm_cct"].get<double>().value_or(4500.0),
++			awb["min_green"].get<double>().value_or(64.0),
++			awb["locus_warmth_blue"].get<double>().value_or(-1.0));
++		if (ok && awb.contains("locus_warmth_table")) {
++			auto table = awb["locus_warmth_table"].get<std::vector<double>>();
++			ok = table && bayerAwb_.configureWarmthTable(*table);
++		}
++		bayerAwbConfigValid_ = bayerAwbConfigValid_ && ok;
++		bayerAwbEnabled_ = bayerAwbEnabled_ || ok;
++	}
+ 	awbWarmth_ = std::clamp(awb["warmth"].get<double>().value_or(0.0), 0.0, 1.0);
+ 	awbNeutral_ = std::max(awb["neutral_ratio"].get<double>().value_or(1.0), 0.1);
+ 	blackLevel_ = (*root)["black_level"].get<int32_t>().value_or(kDefaultBlackLevel);
+@@ -502,6 +564,26 @@ int CamssIspInline::configure(const StreamConfiguration &inputCfg,
+ {
+ 	int ret;
+ 
++	if (!bayerAwbConfigValid_ || !highlightAeConfigValid_ || (centrePriority_ && !highlightAeEnabled_))
++		return -EINVAL;
++	if ((bayerAwbEnabled_ || highlightAeEnabled_) && (!rawStats_ || blackLevel_ != 64 || !lscMesh_ ||
++		std::any_of(lscMesh_->begin(), lscMesh_->end(), [](uint16_t v) { return v != 0; }) ||
++		!pix_->supportsFrameStartEvent())) {
++		LOG(Camss, Error) << "RAW algorithms require paired RAW, SOF events, black64 and explicitly disabled LSC";
++		return -EINVAL;
++	}
++	/* The legacy NV12 AWB changes requested WB before RAW is delivered and
++	 * would prevent the paired-control settling check from making progress. */
++	if (highlightAeEnabled_ && (!bayerAwbEnabled_ || !std::isfinite(targetLuma_) ||
++				   targetLuma_ <= 0 || targetLuma_ > 255)) {
++		LOG(Camss, Error) << "RAW AE requires a Bayer WB reference and a valid luma target";
++		return -EINVAL;
++	}
++
++	if (rawStats_ && (inputCfg.size != Size(3840, 2640) ||
++			  outputCfg.size != Size(3840, 2160) || zoom_ != 1.0))
++		return -EINVAL;
++
+ 	MediaLink *link = csi_->pixLink();
+ 	if (!(link->flags() & MEDIA_LNK_FL_ENABLED)) {
+ 		ret = link->setEnabled(true);
+@@ -629,12 +711,21 @@ int CamssIspInline::allocateBuffers(unsigned int bufferCount)
+ 	if (ret < 0)
+ 		return ret;
+ 
++	if (rawStats_) {
++		ret = rawStats_->allocate();
++		if (ret) {
++			output_->releaseBuffers();
++			return ret;
++		}
++	}
+ 	frameInfos_->init({}, {}, true);
+ 	return 0;
+ }
+ 
+ void CamssIspInline::freeBuffers()
+ {
++	if (rawStats_)
++		rawStats_->release();
+ 	maps_.clear();
+ 	if (output_->releaseBuffers())
+ 		LOG(Camss, Error) << "Failed to release PIX buffers";
+@@ -670,6 +761,7 @@ int CamssIspInline::queueRequest(Request *request)
+ 	bool sensorChanged = false, ispChanged = false;
+ 
+ 	if (const auto &exp = ctrls.get(controls::ExposureTime)) {
++		lumaSamples_.clear();
+ 		if (*exp > 0 && lineDurationUs_ > 0.0) {
+ 			int32_t frameLines = exposureMax_ + exposureMargin_;
+ 			aeEnabled_ = false;
+@@ -684,27 +776,35 @@ int CamssIspInline::queueRequest(Request *request)
+ 		}
+ 	}
+ 	if (const auto &gain = ctrls.get(controls::AnalogueGain)) {
++		lumaSamples_.clear();
+ 		aeEnabled_ = false;
+ 		exposure_.gain = std::min(gainToCode(*gain), gainMax_);
+ 		exposure_.digital = kWbUnity;
+ 		exposure_.sensorDigital = 256;
+ 		sensorChanged = ispChanged = true;
+ 	}
+-	if (const auto &ae = ctrls.get(controls::AeEnable))
++	if (const auto &ae = ctrls.get(controls::AeEnable)) {
++		lumaSamples_.clear();
+ 		aeEnabled_ = *ae;
++	}
+ 
+ 	if (const auto &gains = ctrls.get(controls::ColourGains)) {
++		lumaSamples_.clear();
++		bayerAwb_.reset();
+ 		awbEnabled_ = false;
+ 		wbRed_ = std::clamp<int32_t>(std::lround((*gains)[0] * kWbUnity), 256, kWbMax);
+ 		wbBlue_ = std::clamp<int32_t>(std::lround((*gains)[1] * kWbUnity), 256, kWbMax);
+ 		ispChanged = true;
+ 	}
+-	if (const auto &awb = ctrls.get(controls::AwbEnable))
++	if (const auto &awb = ctrls.get(controls::AwbEnable)) {
++		if (*awb != awbEnabled_)
++			bayerAwb_.reset();
+ 		awbEnabled_ = *awb;
++	}
+ 
+-	if (sensorChanged)
++	if (sensorChanged && !frameSyncEnabled_)
+ 		applySensor();
+-	if (ispChanged)
++	if (ispChanged && !frameSyncEnabled_)
+ 		applyIsp();
+ 
+ 	return output_->queueBuffer(buffer);
+@@ -719,39 +819,84 @@ void CamssIspInline::processStats([[maybe_unused]] const uint32_t frame,
+ int CamssIspInline::start()
+ {
+ 	frameCount_ = 0;
++	lumaSamples_.clear();
++	bayerAwb_.reset();
++	if (bayerAwbEnabled_ && awbEnabled_) {
++		wbRed_ = std::lround(bayerAwb_.reference()[0] * kWbUnity);
++		wbBlue_ = std::lround(bayerAwb_.reference()[1] * kWbUnity);
++	}
++	frameStates_.clear();
++	appliedState_.reset();
+ 	applyTables();
+-	applyIsp();
+-	applySensor();
++	int ret = applyIsp();
++	if (ret)
++		return ret;
++	ret = applySensor();
++	if (ret)
++		return ret;
+ 
+-	return output_->streamOn();
++	frameSyncEnabled_ = sensor_->model() == "imx681" && pix_->supportsFrameStartEvent();
++	if (frameSyncEnabled_) {
++		ret = pix_->setFrameStartEnabled(true);
++		if (ret) {
++			frameSyncEnabled_ = false;
++			return ret;
++		}
++		appliedState_ = currentState();
++		frameStates_[0] = appliedState_;
++		frameStates_[1] = appliedState_;
++	}
++	LOG(Camss, Info) << "Inline frame-start metadata "
++			 << (frameSyncEnabled_ ? "enabled" : "unavailable");
++
++	ret = output_->streamOn();
++	if (!ret && rawStats_) {
++		ret = rawStats_->start();
++		if (ret)
++			output_->streamOff();
++	}
++	if (ret && frameSyncEnabled_) {
++		pix_->setFrameStartEnabled(false);
++		frameSyncEnabled_ = false;
++	}
++	return ret;
+ }
+ 
+ void CamssIspInline::stop()
+ {
++	if (rawStats_)
++		rawStats_->stop();
+ 	if (output_->streamOff())
+ 		LOG(Camss, Error) << "PIX stream off failed";
++	if (frameSyncEnabled_)
++		pix_->setFrameStartEnabled(false);
++	frameSyncEnabled_ = false;
++	frameStates_.clear();
++	appliedState_.reset();
+ 	maps_.clear();
++	lumaSamples_.clear();
+ }
+ 
+ /*
+- * Set the sensor's frame length, exposure and gain. Exposure and gain go
+- * through the pipeline's DelayedControls by way of setSensorControls; the
+- * frame length is applied directly, since the delayed controls do not know
+- * it and it moves rarely.
++ * Inline capture owns the sensor writes. On the frame-sync path they run
++ * only at startup or in frameStart(), so their success and frame history
++ * are tracked together. VBLANK goes first to update the exposure range.
+  */
+-void CamssIspInline::applySensor()
++int CamssIspInline::applySensor()
+ {
+ 	CameraSensor *sensor = const_cast<CameraSensor *>(sensor_);
+ 	ControlList vblank(sensor->controls());
+ 	vblank.set(V4L2_CID_VBLANK, exposure_.vblank);
+ 	if (hasSensorDigital_)
+ 		vblank.set(V4L2_CID_DIGITAL_GAIN, exposure_.sensorDigital);
+-	sensor->setControls(&vblank);
++	int ret = sensor->setControls(&vblank);
++	if (ret)
++		return ret;
+ 
+ 	ControlList ctrls(sensor->controls());
+ 	ctrls.set(V4L2_CID_EXPOSURE, exposure_.exposure);
+ 	ctrls.set(V4L2_CID_ANALOGUE_GAIN, exposure_.gain);
+-	setSensorControls.emit(ctrls);
++	return sensor->setControls(&ctrls);
+ }
+ 
+ /* The gamma curve and colour matrix from the tuning, on drivers that take them */
+@@ -770,7 +915,7 @@ void CamssIspInline::applyTables()
+ 		LOG(Camss, Warning) << "Cannot set the tuning tables";
+ }
+ 
+-void CamssIspInline::applyIsp()
++int CamssIspInline::applyIsp()
+ {
+ 	exposure_.digital = std::min(exposure_.digital, digitalMax());
+ 
+@@ -779,7 +924,83 @@ void CamssIspInline::applyIsp()
+ 	ctrls.set(V4L2_CID_RED_BALANCE, std::min(channelGainMax_, wbRed_ * exposure_.digital / kWbUnity));
+ 	ctrls.set(V4L2_CID_BLUE_BALANCE, std::min(channelGainMax_, wbBlue_ * exposure_.digital / kWbUnity));
+ 	ctrls.set(V4L2_CID_GAIN, exposure_.digital);
+-	pix_->setControls(&ctrls);
++	return pix_->setControls(&ctrls);
++}
++
++CamssIspInline::FrameState CamssIspInline::currentState() const
++{
++	return { exposure_, wbRed_, wbBlue_, aeEnabled_, awbEnabled_ };
++}
++
++void CamssIspInline::frameStart(uint32_t sequence)
++{
++	if (!frameSyncEnabled_)
++		return;
++
++	/*
++	 * IMX681 sensor writes after SOF take two frames; IFE controls take
++	 * one. Keep history in hardware sequence space, independently of
++	 * application request IDs or how many buffers are queued.
++	 */
++	uint64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
++		utils::clock::now().time_since_epoch()).count();
++	uint64_t timestamp = pix_->frameStartTimestamp();
++	/* Keep writes in the first quarter of the shortest configured frame. */
++	uint64_t deadline = (exposureMax_ + exposureMargin_) * lineDurationUs_ * 250;
++	if (!timestamp || now < timestamp || now - timestamp > deadline) {
++		LOG(Camss, Warning) << "Late SOF " << sequence << "; withholding frame metadata";
++		frameStates_.clear();
++		lumaSamples_.clear();
++		return;
++	}
++	bool sensorChanged = !appliedState_ ||
++		appliedState_->exposure.exposure != exposure_.exposure ||
++		appliedState_->exposure.gain != exposure_.gain ||
++		appliedState_->exposure.vblank != exposure_.vblank ||
++		appliedState_->exposure.sensorDigital != exposure_.sensorDigital;
++	bool ispChanged = !appliedState_ ||
++		appliedState_->exposure.digital != exposure_.digital ||
++		appliedState_->red != wbRed_ || appliedState_->blue != wbBlue_;
++	bool frameLengthChanged = !appliedState_ ||
++		appliedState_->exposure.vblank != exposure_.vblank;
++
++	int ret = sensorChanged ? applySensor() : 0;
++	if (!ret && ispChanged)
++		ret = applyIsp();
++	now = std::chrono::duration_cast<std::chrono::nanoseconds>(
++		utils::clock::now().time_since_epoch()).count();
++	if (now - timestamp > deadline)
++		ret = -ETIME;
++	if (ret) {
++		LOG(Camss, Error) << "Inline control write failed at SOF " << sequence;
++		lumaSamples_.clear();
++		appliedState_.reset();
++		frameStates_[sequence + 1] = std::nullopt;
++		frameStates_[sequence + 2] = std::nullopt;
++		while (frameStates_.size() > 32)
++			frameStates_.erase(frameStates_.begin());
++		return;
++	}
++
++	/* A frame-length change can shorten the sensor's transition delay. */
++	if (frameLengthChanged)
++		frameStates_[sequence + 1] = std::nullopt;
++	auto next = frameStates_.find(sequence + 1);
++	if (next != frameStates_.end() && next->second) {
++		next->second->exposure.digital = exposure_.digital;
++		next->second->red = wbRed_;
++		next->second->blue = wbBlue_;
++		next->second->awb = awbEnabled_;
++	}
++	appliedState_ = currentState();
++	frameStates_[sequence + 2] = appliedState_;
++	while (frameStates_.size() > 32)
++		frameStates_.erase(frameStates_.begin());
++
++	LOG(Camss, Debug) << "SOF " << sequence << " controls for " << sequence + 2
++			  << " exposure " << exposure_.exposure << " gain " << exposure_.gain
++			  << " vblank " << exposure_.vblank << " R " << wbRed_ << " B " << wbBlue_
++			  << " write_us " << (now - timestamp) / 1000;
+ }
+ 
+ /*
+@@ -875,7 +1096,8 @@ void CamssIspInline::denoise(FrameBuffer *buffer, unsigned int frame)
+  * white balance, applied as a correction to the gains already in place
+  * since the statistics are taken after them.
+  */
+-void CamssIspInline::runAlgorithms(FrameBuffer *buffer, unsigned int frame)
++void CamssIspInline::runAlgorithms(FrameBuffer *buffer, unsigned int frame,
++				 const FrameState &state)
+ {
+ 	uint8_t *yp, *cp_;
+ 	if (!framePlanes(buffer, &yp, &cp_))
+@@ -919,8 +1141,15 @@ void CamssIspInline::runAlgorithms(FrameBuffer *buffer, unsigned int frame)
+ 	if (!aeEnabled_ && !awbEnabled_)
+ 		return;
+ 
++	/* One decision owns live exposure: join this luma sample to RAW before
++	 * applying either the brightness request or its highlight constraint. */
++	if (aeEnabled_ && highlightAeEnabled_ && state.ae) {
++		lumaSamples_[buffer->metadata().sequence] = { meanY, buffer->metadata().timestamp };
++		while (lumaSamples_.size() > 8)
++			lumaSamples_.erase(lumaSamples_.begin());
++	}
+ 	/* Exposure */
+-	if (aeEnabled_) {
++	if (aeEnabled_ && !highlightAeEnabled_) {
+ 	double k = std::pow(targetLuma_ / 255.0, 2.2) / std::max(std::pow(meanY / 255.0, 2.2), 1e-4);
+ 	k = std::clamp(std::pow(k, 0.6), 0.5, 2.0);
+ 
+@@ -931,10 +1160,44 @@ void CamssIspInline::runAlgorithms(FrameBuffer *buffer, unsigned int frame)
+ 	 * where the loop moves from exposure to gain, and the picture hunted
+ 	 * across it at a third of a stop.
+ 	 */
+-	const double knee = gainFromCode(kGainKnee);
++	double total = (double)state.exposure.exposure * gainFromCode(state.exposure.gain) *
++		       state.exposure.sensorDigital / 256.0 * state.exposure.digital * k / kWbUnity;
++	setExposureTotal(total, true);
++	}
++
++	/* White balance, incremental grey world */
++	if (awbEnabled_ && !bayerAwbEnabled_) {
++	/*
++	 * Under a warm light (blue gain well above red) leave part of its
++	 * colour in, as a warm room looks warm to the eye: the bias moves
++	 * with the light's warmth, by its share 'warmth'.
++	 */
++	double warm = std::sqrt(std::max(static_cast<double>(state.blue) / state.red / awbNeutral_, 1.0));
++	double kr = awbRedBias_ * std::pow(warm, awbWarmth_) * G / std::max(R, 1e-4);
++	double kb = awbBlueBias_ * std::pow(warm, -awbWarmth_) * G / std::max(B, 1e-4);
++	wbRed_ = std::clamp<int32_t>(state.red * std::pow(kr, 0.5), 256, kWbMax);
++	wbBlue_ = std::clamp<int32_t>(state.blue * std::pow(kb, 0.5), 256, kWbMax);
++	}
++
++	if (aeEnabled_ && !frameSyncEnabled_)
++		applySensor();
++	if (!frameSyncEnabled_)
++		applyIsp();
++
++	if (frame % 30 == 0)
++		LOG(Camss, Debug) << "frame " << frame << " Y " << meanY
++				  << " exposure " << exposure_.exposure
++				  << " vblank " << exposure_.vblank
++				  << " gain " << exposure_.gain
++				  << " sensor digital " << exposure_.sensorDigital
++				  << " digital " << exposure_.digital
++				  << " R " << wbRed_ << " B " << wbBlue_;
++}
++
++void CamssIspInline::setExposureTotal(double total, bool allowDigital)
++{
++	const double knee = gainFromCode(gainKnee_);
+ 	const double gainTop = gainFromCode(gainMax_);
+-	double total = (double)exposure_.exposure * gainFromCode(exposure_.gain) *
+-		       exposure_.sensorDigital / 256.0 * exposure_.digital * k / kWbUnity;
+ 	/*
+ 	 * Past the analogue gain, the sensor's digital gain before the IFE's:
+ 	 * it costs the same noise, but gain in the IFE shares its limit with
+@@ -943,13 +1206,15 @@ void CamssIspInline::runAlgorithms(FrameBuffer *buffer, unsigned int frame)
+ 	const double sdMax = hasSensorDigital_ ? sensorDigitalMax_ : 1.0;
+ 	int32_t frameLines = exposureMax_ + exposureMargin_;
+ 	int32_t exposureSlow = (int32_t)(frameLines * slowFrame_) - exposureMargin_;
++	if (!allowDigital)
++		total = std::min(total, exposureSlow * gainTop);
+ 	Exposure e;
+ 	if (total <= exposureMax_) {
+ 		e = { std::max<int32_t>(100, (int32_t)total), 0, vblankDef_, kWbUnity };
+ 	} else if (total <= exposureMax_ * knee) {
+ 		e = { exposureMax_, gainToCode(total / exposureMax_), vblankDef_, kWbUnity };
+ 	} else if (total <= exposureSlow * knee) {
+-		e = { std::min<int32_t>(exposureSlow, total / knee), kGainKnee, 0, kWbUnity };
++		e = { std::min<int32_t>(exposureSlow, total / knee), gainKnee_, 0, kWbUnity };
+ 	} else if (total <= exposureSlow * gainTop) {
+ 		e = { exposureSlow, std::min(gainToCode(total / exposureSlow), gainMax_), 0, kWbUnity };
+ 	} else if (total <= exposureSlow * gainTop * sdMax) {
+@@ -964,46 +1229,109 @@ void CamssIspInline::runAlgorithms(FrameBuffer *buffer, unsigned int frame)
+ 	e.vblank = std::clamp<int32_t>(e.exposure + exposureMargin_ - (frameLines - vblankDef_),
+ 				       vblankDef_, vblankMax_);
+ 	exposure_ = e;
+-	}
+-
+-	/* White balance, incremental grey world */
+-	if (awbEnabled_) {
+-	/*
+-	 * Under a warm light (blue gain well above red) leave part of its
+-	 * colour in, as a warm room looks warm to the eye: the bias moves
+-	 * with the light's warmth, by its share 'warmth'.
+-	 */
+-	double warm = std::sqrt(std::max(static_cast<double>(wbBlue_) / wbRed_ / awbNeutral_, 1.0));
+-	double kr = awbRedBias_ * std::pow(warm, awbWarmth_) * G / std::max(R, 1e-4);
+-	double kb = awbBlueBias_ * std::pow(warm, -awbWarmth_) * G / std::max(B, 1e-4);
+-	wbRed_ = std::clamp<int32_t>(wbRed_ * std::pow(kr, 0.5), 256, kWbMax);
+-	wbBlue_ = std::clamp<int32_t>(wbBlue_ * std::pow(kb, 0.5), 256, kWbMax);
+-	}
+-
+-	if (aeEnabled_)
+-		applySensor();
+-	applyIsp();
+-
+-	if (frame % 30 == 0)
+-		LOG(Camss, Debug) << "frame " << frame << " Y " << meanY
+-				  << " exposure " << exposure_.exposure
+-				  << " vblank " << exposure_.vblank
+-				  << " gain " << exposure_.gain
+-				  << " sensor digital " << exposure_.sensorDigital
+-				  << " digital " << exposure_.digital
+-				  << " R " << wbRed_ << " B " << wbBlue_;
+ }
+ 
+-void CamssIspInline::fillMetadata(ControlList &metadata) const
++void CamssIspInline::histogramReady(uint32_t sequence, uint64_t timestamp,
++				  const CamssHighlightAe::Stats &stats)
+ {
+-	metadata.set(controls::AeEnable, aeEnabled_);
++	if (!highlightAeEnabled_ || !aeEnabled_ || !frameSyncEnabled_)
++		return;
++	uint64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
++		utils::clock::now().time_since_epoch()).count();
++	auto context = frameStates_.find(sequence);
++	if (now < timestamp || now - timestamp > 16666667 ||
++	    context == frameStates_.end() || !context->second) {
++		lumaSamples_.clear();
++		LOG(Camss, Debug) << "RAW AE " << sequence << " stale-or-ambiguous; holding exposure";
++		return;
++	}
++	auto sample = lumaSamples_.find(sequence);
++	if (sample == lumaSamples_.end())
++		return;
++	LumaSample luma = sample->second;
++	lumaSamples_.erase(lumaSamples_.begin(), lumaSamples_.upper_bound(sequence));
++	if (now < luma.timestamp || now - luma.timestamp > 16666667) {
++		LOG(Camss, Debug) << "RAW AE " << sequence << " stale-luma; holding exposure";
++		return;
++	}
++	const FrameState &state = *context->second;
++	/* Wait for the last decision and any WB change to reach the sensor/IFE.
++	 * This also rejects pre-manual/pre-resume frames without integrating an
++	 * error while controls are in flight. IFE digital gain is disabled in this
++	 * mode; sensor digital gain and white balance are measured per frame, so
++	 * white-balance tracking no longer holds the exposure loop. */
++	if (!state.ae || state.exposure.exposure != exposure_.exposure ||
++	    state.exposure.gain != exposure_.gain || state.exposure.vblank != exposure_.vblank ||
++	    state.exposure.digital != kWbUnity ||
++	    exposure_.digital != kWbUnity) {
++		/* Sensor digital gain is part of the measured total (see below) and
++		 * no longer counts as an unsettled control. */
++		LOG(Camss, Debug) << "RAW AE " << sequence << " unsettled-controls; holding exposure";
++		return;
++	}
++	auto result = CamssHighlightAe::evaluate(stats,
++		{ state.red / 1024.0, state.blue / 1024.0 }, luma.mean, targetLuma_, centrePriority_,
++		highlightPeak_, peripheralClipping_, centreClipping_, centrePercentile_);
++	if (!result.valid) {
++		LOG(Camss, Warning) << "RAW AE " << sequence << " invalid-statistics; holding exposure";
++		return;
++	}
++	/* Sensor digital gain scales the RAW samples like analogue gain does,
++	 * so it is part of the measured total. The IFE's own digital gain stays
++	 * out of the RAW loop: it is applied after the statistics. */
++	double current = state.exposure.exposure * gainFromCode(state.exposure.gain) *
++			 state.exposure.sensorDigital / 256.0;
++	const double sdMax = hasSensorDigital_ ? sensorDigitalMax_ : 1.0;
++	const int32_t rawSlow = (int32_t)((exposureMax_ + exposureMargin_) * slowFrame_) - exposureMargin_;
++	setExposureTotal(std::min(current * result.scale, rawSlow * gainFromCode(gainMax_) * sdMax), sdMax > 1.0);
++	LOG(Camss, Info) << "RAW AE " << sequence << " Y " << luma.mean
++			 << " peak " << result.peak << " saturated " << result.saturated
++			 << " photometric " << result.photometric << " scale " << result.scale
++			 << " centre-priority " << centrePriority_ << " centre-peak " << result.centrePeak
++			 << " centre-saturated " << result.centreSaturated
++			 << " current " << current << " next "
++			 << exposure_.exposure * gainFromCode(exposure_.gain) * exposure_.sensorDigital / 256.0
++			 << " sensor-digital " << exposure_.sensorDigital / 256.0;
++}
++
++/* A measured session reference constrains RAW neutral selection and drift. */
++void CamssIspInline::bayerStatsReady(uint32_t sequence, uint64_t timestamp,
++				    const CamssBayerAwb::Stats &stats)
++{
++	if (!bayerAwbEnabled_ || !awbEnabled_ || !frameSyncEnabled_)
++		return;
++	uint64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
++		utils::clock::now().time_since_epoch()).count();
++	auto state = frameStates_.find(sequence);
++	/* No updates from stale buffers or ambiguous captured-frame contexts. */
++	if (now < timestamp || now - timestamp > 16666667 ||
++	    state == frameStates_.end() || !state->second) {
++		bayerAwb_.reset();
++		LOG(Camss, Debug) << "Bayer AWB " << sequence << " stale-or-ambiguous; holding gains";
++		return;
++	}
++	if (sequence % 4)
++		return;
++	auto result = bayerAwb_.process(stats, { wbRed_ / 1024.0, wbBlue_ / 1024.0 });
++	if (result.accepted) {
++		wbRed_ = std::lround(result.gains[0] * kWbUnity);
++		wbBlue_ = std::lround(result.gains[1] * kWbUnity);
++	}
++	LOG(Camss, Info) << "Bayer AWB " << sequence << " " << result.reason
++			 << " tiles " << result.selected << " R " << wbRed_ << " B " << wbBlue_
++			 << (bayerAwb_.locusMode() ? " cct " : "") << (bayerAwb_.locusMode() ? std::to_string(std::lround(result.cct)) : std::string());
++}
++
++void CamssIspInline::fillMetadata(ControlList &metadata, const FrameState &state) const
++{
++	metadata.set(controls::AeEnable, state.ae);
+ 	metadata.set(controls::ExposureTime,
+-		     static_cast<int32_t>(std::lround(exposure_.exposure * lineDurationUs_)));
+-	metadata.set(controls::AnalogueGain, gainFromCode(exposure_.gain));
+-	metadata.set(controls::DigitalGain, exposure_.digital / static_cast<float>(kWbUnity) *
+-						    exposure_.sensorDigital / 256.0f);
+-	metadata.set(controls::AwbEnable, awbEnabled_);
+-	metadata.set(controls::ColourGains, Span<const float, 2>({ wbRed_ / 1024.0f, wbBlue_ / 1024.0f }));
++		     static_cast<int32_t>(std::lround(state.exposure.exposure * lineDurationUs_)));
++	metadata.set(controls::AnalogueGain, gainFromCode(state.exposure.gain));
++	metadata.set(controls::DigitalGain, state.exposure.digital / static_cast<float>(kWbUnity) *
++						    state.exposure.sensorDigital / 256.0f);
++	metadata.set(controls::AwbEnable, state.awb);
++	metadata.set(controls::ColourGains, Span<const float, 2>({ state.red / 1024.0f, state.blue / 1024.0f }));
+ 	metadata.set(controls::SensorBlackLevels,
+ 		     Span<const int32_t, 4>({ blackLevel_ << 6, blackLevel_ << 6, blackLevel_ << 6, blackLevel_ << 6 }));
+ }
+@@ -1020,6 +1348,19 @@ void CamssIspInline::bufferReady(FrameBuffer *buffer)
+ 
+ 	bool ok = buffer->metadata().status == FrameMetadata::FrameSuccess;
+ 	unsigned int frame = info->id;
++	std::optional<FrameState> state;
++	if (frameSyncEnabled_) {
++		auto it = frameStates_.find(buffer->metadata().sequence);
++		if (it != frameStates_.end())
++			state = it->second;
++	} else {
++		state = currentState();
++	}
++	ControlList metadata(controls::controls);
++	if (ok && state)
++		fillMetadata(metadata, *state);
++	if (rawStats_)
++		rawStats_->recordOutput(buffer, frame, metadata);
+ 
+ 	/*
+ 	 * The buffer first, the metadata after: the pipeline completes the
+@@ -1032,11 +1373,9 @@ void CamssIspInline::bufferReady(FrameBuffer *buffer)
+ 
+ 	outputBufferReady.emit(buffer);
+ 
+-	if (ok && (frameCount_++ % 4) == 0)
+-		runAlgorithms(buffer, frame);
++	if (ok && (frameCount_++ % 4) == 0 && state)
++		runAlgorithms(buffer, frame, *state);
+ 
+-	ControlList metadata(controls::controls);
+-	fillMetadata(metadata);
+ 	metadataReady.emit(frame, metadata);
+ }
+ 
+diff --git i/src/libcamera/pipeline/camss/camss_isp_inline.h w/src/libcamera/pipeline/camss/camss_isp_inline.h
+index 96390a52a17c15972bd9762f57a5767afef6d2ee..eeb9386c3e56491fb6c0494499265e47c36b4ae9 100644
+--- i/src/libcamera/pipeline/camss/camss_isp_inline.h
++++ w/src/libcamera/pipeline/camss/camss_isp_inline.h
+@@ -16,6 +16,8 @@
+ #include "libcamera/internal/v4l2_subdevice.h"
+ #include "libcamera/internal/v4l2_videodevice.h"
+ 
++#include "camss_bayer_awb.h"
++#include "camss_highlight_ae.h"
+ #include "camss_denoise.h"
+ #include "camss_isp.h"
+ #include "camss_spatial.h"
+@@ -23,6 +25,7 @@
+ namespace libcamera {
+ 
+ class CamssCsiCamera;
++class CamssRawStats;
+ class CamssFrames;
+ class CameraSensor;
+ class ControlInfoMap;
+@@ -71,22 +74,46 @@ private:
+ 		int32_t digital;	/* Q10, in the IFE */
+ 		int32_t sensorDigital = 256;	/* Q8, in the sensor */
+ 	};
++	struct FrameState {
++		Exposure exposure;
++		int32_t red;
++		int32_t blue;
++		bool ae;
++		bool awb;
++	};
+ 
+ 	void loadTuning();
++	void bayerStatsReady(uint32_t sequence, uint64_t timestamp, const CamssBayerAwb::Stats &stats);
++	void histogramReady(uint32_t sequence, uint64_t timestamp, const CamssHighlightAe::Stats &stats);
++	void setExposureTotal(double total, bool allowDigital);
++	void frameStart(uint32_t sequence);
++	FrameState currentState() const;
+ 	void bufferReady(FrameBuffer *buffer);
+-	void runAlgorithms(FrameBuffer *buffer, unsigned int frame);
++	void runAlgorithms(FrameBuffer *buffer, unsigned int frame, const FrameState &state);
+ 	MappedFrameBuffer *mapBuffer(FrameBuffer *buffer);
+ 	bool framePlanes(FrameBuffer *buffer, uint8_t **y, uint8_t **c);
+ 	void denoise(FrameBuffer *buffer, unsigned int frame);
+-	void fillMetadata(ControlList &metadata) const;
++	void fillMetadata(ControlList &metadata, const FrameState &state) const;
+ 	void publishControls(ControlInfoMap *ispControls) const;
+ 	void updateLineDuration();
+ 	int32_t manualExposureMax() const;
+ 	int32_t digitalMax() const;
+-	void applySensor();
+-	void applyIsp();
++	int applySensor();
++	int applyIsp();
+ 	void applyTables();
+ 
++	CamssBayerAwb bayerAwb_;
++	bool bayerAwbEnabled_ = false;
++	bool bayerAwbConfigValid_ = true;
++	bool highlightAeEnabled_ = false;
++	bool highlightAeConfigValid_ = true;
++	bool centrePriority_ = false;
++	struct LumaSample {
++		double mean;
++		uint64_t timestamp;
++	};
++	std::map<uint32_t, LumaSample> lumaSamples_;
++	std::unique_ptr<CamssRawStats> rawStats_;
+ 	CamssCsiCamera *csi_;
+ 	const CameraSensor *sensor_;
+ 	V4L2Subdevice *pix_;
+@@ -115,6 +142,9 @@ private:
+ 	int32_t channelGainMax_;	/* Q10, the IFE's limit on each channel's gain */
+ 	int32_t blackLevel_;	/* 10-bit units */
+ 	unsigned int frameCount_;
++	bool frameSyncEnabled_ = false;
++	std::map<uint32_t, std::optional<FrameState>> frameStates_;
++	std::optional<FrameState> appliedState_;
+ 
+ 	/* tuning: exposure target, and the tables the PIX line takes */
+ 	double targetLuma_;
+@@ -125,6 +155,11 @@ private:
+ 	double awbWarmth_;	/* share of a warm light's colour kept, 0..1 */
+ 	double awbNeutral_;	/* blue/red gain ratio above which a light counts as warm */
+ 	double slowFrame_;	/* longest frame in the dark, in default frame lengths */
++	int32_t gainKnee_;	/* analogue gain code reached before the frame grows */
++	double highlightPeak_;	/* RAW 99.5th percentile target of the highlight ceiling */
++	double peripheralClipping_;	/* whole-frame clipping budget in centre-priority mode */
++	double centreClipping_;	/* central clipping budget in centre-priority mode */
++	double centrePercentile_;	/* central percentile the peak target applies to */
+ 	double awbRedBias_;	/* multipliers on the grey-world gains */
+ 	double awbBlueBias_;
+ 	std::optional<std::array<uint16_t, 256>> gammaLut_;
+diff --git i/src/libcamera/pipeline/camss/camss_raw_stats.cpp w/src/libcamera/pipeline/camss/camss_raw_stats.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..32d79b582ec1c98b0a4392b3ac06c188b5b31e95
+--- /dev/null
++++ w/src/libcamera/pipeline/camss/camss_raw_stats.cpp
+@@ -0,0 +1,288 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Experimental IMX681 native-4K paired Bayer statistics recorder. */
++#include "camss_raw_stats.h"
++
++#include <array>
++#include <cerrno>
++#include <cstdlib>
++#include <cstring>
++#include <filesystem>
++
++#include <linux/dma-buf.h>
++#include <sys/ioctl.h>
++
++#include <libcamera/base/log.h>
++#include <libcamera/control_ids.h>
++#include <libcamera/controls.h>
++
++#include "libcamera/internal/mapped_framebuffer.h"
++
++namespace libcamera {
++
++LOG_DECLARE_CATEGORY(Camss)
++
++namespace {
++constexpr unsigned int kStride = 4800;
++constexpr unsigned int kRawBytes = kStride * 2640;
++constexpr unsigned int kStep = 8;
++
++unsigned int raw10(const uint8_t *row, unsigned int x)
++{
++	const uint8_t *group = row + (x / 4) * 5;
++	return (group[x % 4] << 2) | ((group[4] >> (2 * (x % 4))) & 3);
++}
++} /* namespace */
++
++CamssRawStats::CamssRawStats(V4L2VideoDevice *output, const std::string &directory)
++	: output_(output), directory_(directory)
++{
++	saveRaw_ = std::getenv("LIBCAMERA_CAMSS_RAW_SAVE") != nullptr;
++	output_->bufferReady.connect(this, &CamssRawStats::bufferReady);
++}
++
++CamssRawStats::~CamssRawStats()
++{
++	stop();
++	release();
++}
++
++int CamssRawStats::allocate()
++{
++	V4L2DeviceFormat fmt;
++	int ret = output_->getFormat(&fmt);
++	if (ret)
++		return ret;
++	if (fmt.size != Size(3840, 2640) || fmt.fourcc.toString() != "pRAA" ||
++	    fmt.planesCount != 1 || fmt.planes[0].bpl != kStride || fmt.planes[0].size < kRawBytes)
++		return -EINVAL;
++	ret = output_->exportBuffers(4, &buffers_);
++	if (ret < 0)
++		return ret;
++	ret = output_->importBuffers(4);
++	if (ret)
++		release();
++	return ret;
++}
++
++void CamssRawStats::release()
++{
++	maps_.clear();
++	if (!buffers_.empty()) {
++		output_->releaseBuffers();
++		buffers_.clear();
++	}
++}
++
++int CamssRawStats::start()
++{
++	std::string path = (std::filesystem::path(directory_) / "stats.jsonl").string();
++	log_ = fopen(path.c_str(), "wx");
++	if (!log_)
++		return -errno;
++	failed_ = false;
++	rawCount_ = outputCount_ = 0;
++	lastSequence_ = UINT32_MAX;
++	lastRaw_.clear();
++	wanted_.clear();
++	saved_.clear();
++	fprintf(log_, "{\"type\":\"header\",\"version\":1,\"raw_size\":[3840,2640],"
++		"\"stride\":4800,\"format\":\"RGGB10_CSI2P\",\"crop\":[0,240,3840,2160],"
++		"\"sample_step\":8,\"channels\":[\"R\",\"Gr\",\"Gb\",\"B\"],"
++		"\"centre_crop_in_output\":[960,540,1920,1080],\"centre_samples_per_channel\":32400,"
++		"\"tiles\":[8,6],\"black_level_assumption\":64,\"valid_quad_range_exclusive\":[72,1000],"
++		"\"timestamp\":\"buffer completion, not exposure start\"}\n");
++	for (const auto &buffer : buffers_) {
++		auto map = std::make_unique<MappedFrameBuffer>(buffer.get(), MappedFrameBuffer::MapFlag::Read);
++		if (!map->isValid()) {
++			failed_ = true;
++			stop();
++			return -ENOMEM;
++		}
++		maps_[buffer.get()] = std::move(map);
++		int ret = output_->queueBuffer(buffer.get());
++		if (ret) {
++			failed_ = true;
++			output_->streamOff();
++			stop();
++			return ret;
++		}
++	}
++	int ret = output_->streamOn();
++	if (ret) {
++		failed_ = true;
++		output_->streamOff();
++		stop();
++		return ret;
++	}
++	running_ = true;
++	return 0;
++}
++
++void CamssRawStats::stop()
++{
++	if (running_) {
++		running_ = false;
++		if (output_->streamOff())
++			failed_ = true;
++	}
++	/* Write retained full frames only after streaming has stopped. */
++	for (const auto &[request, data] : saved_) {
++		std::string path = (std::filesystem::path(directory_) /
++			("request-" + std::to_string(request) + ".raw10")).string();
++		FILE *file = fopen(path.c_str(), "wx");
++		if (!file) {
++			failed_ = true;
++			continue;
++		}
++		if (fwrite(data.data(), 1, data.size(), file) != data.size())
++			failed_ = true;
++		if (fclose(file))
++			failed_ = true;
++	}
++	saved_.clear();
++	lastRaw_.clear();
++	if (log_) {
++		if (ferror(log_))
++			failed_ = true;
++		fprintf(log_, "{\"type\":\"end\",\"raw_frames\":%u,\"output_frames\":%u,\"failed\":%s}\n",
++			rawCount_, outputCount_, failed_ ? "true" : "false");
++		if (fclose(log_))
++			failed_ = true;
++		log_ = nullptr;
++	}
++	if (failed_)
++		LOG(Camss, Error) << "Paired RAW statistics recording failed";
++}
++
++void CamssRawStats::recordOutput(FrameBuffer *buffer, unsigned int request, const ControlList &metadata)
++{
++	if (!log_)
++		return;
++	const auto &meta = buffer->metadata();
++	auto exposure = metadata.get(controls::ExposureTime);
++	auto gain = metadata.get(controls::AnalogueGain);
++	auto wb = metadata.get(controls::ColourGains);
++	bool valid = meta.status == FrameMetadata::FrameSuccess && exposure && gain && wb;
++	fprintf(log_, "{\"type\":\"nv12\",\"request\":%u,\"sequence\":%u,\"timestamp_ns\":%llu,"
++		"\"metadata_valid\":%s,\"exposure_us\":%d,\"analogue_gain\":%.9g,\"colour_gains\":[%.9g,%.9g]}\n",
++		request, meta.sequence, static_cast<unsigned long long>(meta.timestamp), valid ? "true" : "false",
++		exposure.value_or(0), gain.value_or(0), wb ? (*wb)[0] : 0, wb ? (*wb)[1] : 0);
++	outputCount_++;
++	if (saveRaw_ && (request == 58 || request == 59) && meta.status == FrameMetadata::FrameSuccess) {
++		wanted_[meta.sequence] = request;
++		if (lastSequence_ == meta.sequence)
++			saved_[request] = lastRaw_;
++	}
++}
++
++void CamssRawStats::bufferReady(FrameBuffer *buffer)
++{
++	if (!running_)
++		return;
++	const auto &meta = buffer->metadata();
++	if (meta.status != FrameMetadata::FrameSuccess) {
++		failed_ = true;
++	} else if (meta.sequence != UINT32_MAX) {
++		auto &map = maps_.at(buffer);
++		int fd = buffer->planes()[0].fd.get();
++		struct dma_buf_sync sync = { DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ };
++		if (map->planes()[0].size() < kRawBytes || meta.planes()[0].bytesused < kRawBytes ||
++		    ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync) < 0) {
++			failed_ = true;
++		} else {
++			const uint8_t *data = map->planes()[0].data();
++			CamssHighlightAe::Stats stats;
++			auto &hist = stats.full;
++			struct Tile {
++				std::array<uint64_t, 4> sum{};
++				std::array<uint64_t, 4> validSum{};
++				unsigned int valid = 0;
++			};
++			std::array<Tile, 48> tiles{};
++			CamssBayerAwb::Stats awb{};
++			for (unsigned int y = 0; y < 2160; y += kStep) {
++				const uint8_t *row = data + (y + 240) * kStride;
++				for (unsigned int x = 0; x < 3840; x += kStep) {
++					std::array<unsigned int, 4> quad = {
++						raw10(row, x), raw10(row, x + 1),
++						raw10(row + kStride, x), raw10(row + kStride, x + 1)
++					};
++					if (awbStats_) {
++						auto &fine = awb[(y / 120) * CamssBayerAwb::kColumns + x / 120];
++						fine.count++;
++						bool neutralValid = true;
++						for (unsigned int value : quad)
++							neutralValid &= value > 72 && value < 1000;
++						if (neutralValid) {
++							fine.valid++;
++							for (unsigned int c = 0; c < 4; c++)
++								fine.sum[c] += quad[c] - 64;
++						}
++					}
++					Tile &tile = tiles[(y / 360) * 8 + x / 480];
++					bool valid = true;
++					for (unsigned int c = 0; c < 4; c++) {
++						hist[c][quad[c]]++;
++						if (x >= 960 && x < 2880 && y >= 540 && y < 1620)
++							stats.centre[c][quad[c]]++;
++						tile.sum[c] += quad[c];
++						valid &= quad[c] > 72 && quad[c] < 1000;
++					}
++					if (valid) {
++						tile.valid++;
++						for (unsigned int c = 0; c < 4; c++)
++							tile.validSum[c] += quad[c] - 64;
++					}
++				}
++			}
++			if (saveRaw_) {
++				lastSequence_ = meta.sequence;
++				lastRaw_.assign(data, data + kRawBytes);
++				auto it = wanted_.find(meta.sequence);
++				if (it != wanted_.end())
++					saved_[it->second] = lastRaw_;
++			}
++			sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
++			if (ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync) < 0)
++				failed_ = true;
++			fprintf(log_, "{\"type\":\"raw\",\"sequence\":%u,\"timestamp_ns\":%llu,\"histogram\":[",
++				meta.sequence, static_cast<unsigned long long>(meta.timestamp));
++			for (unsigned int c = 0; c < 4; c++) {
++				fprintf(log_, "%s[", c ? "," : "");
++				for (unsigned int b = 0; b < 1024; b++)
++					fprintf(log_, "%s%u", b ? "," : "", hist[c][b]);
++				fprintf(log_, "]");
++			}
++			fprintf(log_, "],\"centre_histogram\":[");
++			for (unsigned int c = 0; c < 4; c++) {
++				fprintf(log_, "%s[", c ? "," : "");
++				for (unsigned int b = 0; b < 1024; b++)
++					fprintf(log_, "%s%u", b ? "," : "", stats.centre[c][b]);
++				fprintf(log_, "]");
++			}
++			fprintf(log_, "],\"tiles\":[");
++			for (unsigned int t = 0; t < 48; t++) {
++				const auto &tile = tiles[t];
++				fprintf(log_, "%s{\"count\":2700,\"valid_count\":%u,\"sum\":[", t ? "," : "", tile.valid);
++				for (unsigned int c = 0; c < 4; c++)
++					fprintf(log_, "%s%llu", c ? "," : "", static_cast<unsigned long long>(tile.sum[c]));
++				fprintf(log_, "],\"valid_black_subtracted_sum\":[");
++				for (unsigned int c = 0; c < 4; c++)
++					fprintf(log_, "%s%llu", c ? "," : "", static_cast<unsigned long long>(tile.validSum[c]));
++				fprintf(log_, "]}");
++			}
++			fprintf(log_, "]}\n");
++			rawCount_++;
++			if (!failed_)
++				histogramReady.emit(meta.sequence, meta.timestamp, stats);
++			if (awbStats_ && !failed_)
++				statsReady.emit(meta.sequence, meta.timestamp, awb);
++		}
++	}
++	if (output_->queueBuffer(buffer)) {
++		failed_ = true;
++		LOG(Camss, Error) << "Cannot requeue paired RAW buffer";
++	}
++}
++
++} /* namespace libcamera */
+diff --git i/src/libcamera/pipeline/camss/camss_raw_stats.h w/src/libcamera/pipeline/camss/camss_raw_stats.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..097c92bfa06d8c94bf0bec9c1c13026cc81d9fec
+--- /dev/null
++++ w/src/libcamera/pipeline/camss/camss_raw_stats.h
+@@ -0,0 +1,57 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Experimental IMX681 native-4K paired Bayer statistics recorder. */
++#pragma once
++
++#include <cstdio>
++#include <map>
++#include <memory>
++#include <string>
++#include <vector>
++
++#include <libcamera/geometry.h>
++#include <libcamera/base/signal.h>
++
++#include "camss_bayer_awb.h"
++#include "camss_highlight_ae.h"
++
++#include "libcamera/internal/v4l2_videodevice.h"
++
++namespace libcamera {
++
++class ControlList;
++class MappedFrameBuffer;
++
++class CamssRawStats
++{
++public:
++	CamssRawStats(V4L2VideoDevice *output, const std::string &directory);
++	~CamssRawStats();
++	int allocate();
++	void release();
++	int start();
++	void stop();
++	void recordOutput(FrameBuffer *buffer, unsigned int request, const ControlList &metadata);
++	void enableAwbStats() { awbStats_ = true; }
++	Signal<uint32_t, uint64_t, const CamssBayerAwb::Stats &> statsReady;
++	Signal<uint32_t, uint64_t, const CamssHighlightAe::Stats &> histogramReady;
++
++private:
++	void bufferReady(FrameBuffer *buffer);
++	V4L2VideoDevice *output_;
++	std::string directory_;
++	std::vector<std::unique_ptr<FrameBuffer>> buffers_;
++	std::map<FrameBuffer *, std::unique_ptr<MappedFrameBuffer>> maps_;
++	FILE *log_ = nullptr;
++	bool running_ = false;
++	bool failed_ = false;
++	bool saveRaw_ = false;
++	bool awbStats_ = false;
++	unsigned int rawCount_ = 0;
++	unsigned int outputCount_ = 0;
++	uint32_t lastSequence_ = UINT32_MAX;
++	std::vector<uint8_t> lastRaw_;
++	std::map<uint32_t, unsigned int> wanted_;
++	std::map<unsigned int, std::vector<uint8_t>> saved_;
++};
++
++} /* namespace libcamera */
+diff --git i/src/libcamera/pipeline/camss/meson.build w/src/libcamera/pipeline/camss/meson.build
+index 4e682e085163dd80da9ed266d82dd91443270d2e..3b9f7c9f3b6a7e779b621f69aa7eedb2ca7f3108 100644
+--- i/src/libcamera/pipeline/camss/meson.build
++++ w/src/libcamera/pipeline/camss/meson.build
+@@ -8,6 +8,7 @@ libcamera_internal_sources += files([
+     'camss_frames.cpp',
+     'camss_isp.cpp',
+     'camss_isp_inline.cpp',
++    'camss_raw_stats.cpp',
+     'camss_isp_ope.cpp',
+     'camss_isp_soft.cpp',
+     'camss_util.cpp',
+diff --git i/src/libcamera/v4l2_device.cpp w/src/libcamera/v4l2_device.cpp
+index 786c3855a592f130ec8f334a4f575222d337fa14..f262d99ed169925085ce4deef3efef8b0a9efab0 100644
+--- i/src/libcamera/v4l2_device.cpp
++++ w/src/libcamera/v4l2_device.cpp
+@@ -520,6 +520,15 @@ int V4L2Device::setFrameStartEnabled(bool enable)
+ 	return ret;
+ }
+ 
++/**
++ * \fn V4L2Device::frameStartTimestamp() const
++ * \brief Retrieve the last dequeued frame-start event's monotonic timestamp
++ * \return Timestamp in nanoseconds, or zero before the first event
++ *
++ * Read this in a frameStart slot to check how old the notification is before
++ * scheduling sensor writes against its frame sequence number.
++ */
++
+ /**
+  * \var V4L2Device::frameStart
+  * \brief A Signal emitted when capture of a frame has started
+@@ -868,6 +877,7 @@ void V4L2Device::eventAvailable()
+ 		return;
+ 	}
+ 
++	frameStartTimestamp_ = event.timestamp.tv_sec * 1000000000ULL + event.timestamp.tv_nsec;
+ 	frameStart.emit(event.u.frame_sync.frame_sequence);
+ }
+ 

@@ -1,0 +1,285 @@
+From 0235b708c363984f8ac4b1e0bf116d48eab64f1d Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Sat, 17 Oct 2026 15:43:12 -0400
+Subject: [PATCH 2367/2368] media: camss: icp: import the validated DMA mapping
+ and lifecycle fixes
+
+Import the working source snapshot: bounded read-only DMA mappings, balanced runtime PM on probe errors, IRQ and firmware teardown before shared DMA release, and disabled manual unbind while laboratory mappings exist.
+
+diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
+index f5ada94a23e8630aa9f7c44542f0d208d4d02cc0..c880965348f41209d2f2f5c4627cc2ee3432eab1 100644
+--- a/drivers/media/platform/qcom/camss/camss-icp.c
++++ b/drivers/media/platform/qcom/camss/camss-icp.c
+@@ -15,6 +15,7 @@
+ #include <linux/iommu.h>
+ #include <linux/iopoll.h>
+ #include <linux/module.h>
++#include <linux/mm.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+ #include <linux/of_reserved_mem.h>
+@@ -111,6 +112,7 @@ struct camss_icp {
+ 	u8 *lab_resp;
+ 	int lab_resp_len;
+ 	struct icp_lab_buf {
++		struct device *dev;
+ 		void *vaddr;
+ 		dma_addr_t iova;	/* fixed address, inside IO region 1 */
+ 		dma_addr_t alloc_iova;	/* the DMA API's own mapping */
+@@ -336,6 +338,32 @@ static const struct icp_hfi_ops hfi_ops = {
+ 	.raise_irq = icp_raise_irq,
+ };
+ 
++/* Clocks and the runtime-PM reference are held while firmware can run. */
++static void icp_power_off(struct camss_icp *icp)
++{
++	const struct camss_icp_resources *res = icp->icp_res;
++	int i;
++
++	for (i = 0; i < res->noc_num; i++) {
++		if (icp->icc_path[i])
++			icc_set_bw(icp->icc_path[i], 0, 0);
++	}
++	clk_bulk_disable_unprepare(res->clk_num, icp->clks);
++	pm_runtime_put_sync_suspend(icp->dev);
++}
++
++/* Stop both CPU and firmware access before unmapping any shared memory. */
++static void icp_stop_firmware(struct camss_icp *icp)
++{
++	int ret;
++
++	writel(0, icp->cirq_base + CIRQ_OB_MASK);
++	disable_irq(icp->irq);
++	ret = qcom_scm_pas_shutdown(icp->icp_res->pas_id);
++	if (ret)
++		dev_warn(icp->dev, "PAS shutdown failed: %d\n", ret);
++}
++
+ static int icp_boot(struct camss_icp *icp)
+ {
+ 	const struct camss_icp_resources *icp_res = icp->icp_res;
+@@ -353,7 +381,7 @@ static int icp_boot(struct camss_icp *icp)
+ 	ret = clk_bulk_prepare_enable(icp_res->clk_num, icp->clks);
+ 	if (ret) {
+ 		dev_err(icp->dev, "Failed to enable clocks: %d\n", ret);
+-		return ret;
++		goto err_pm;
+ 	}
+ 
+ 	for (i = 0; i < icp_res->noc_num; i++) {
+@@ -362,7 +390,7 @@ static int icp_boot(struct camss_icp *icp)
+ 			ret = icc_set_bw(icp->icc_path[i], 100000000, 1000000000);
+ 			if (ret) {
+ 				dev_err(icp->dev, "Voting for %s failed\n", icp_res->noc_names[i]);
+-				return ret;
++				goto err_clk;
+ 			}
+ 		}
+ 	}
+@@ -416,11 +444,6 @@ static int icp_boot(struct camss_icp *icp)
+ 		goto err_clk;
+ 	}
+ 
+-	/* Configure interrupts */
+-	writel(CIRQ_ALL, icp->cirq_base + CIRQ_OB_CLEAR);
+-	writel(CIRQ_CMD_CLEAR, icp->cirq_base + CIRQ_OB_CMD);
+-	writel(CIRQ_ICP2HOSTINT | CIRQ_WDT_BITE_WS0, icp->cirq_base + CIRQ_OB_MASK);
+-
+ 	/* Load firmware */
+ 	ret = icp_load_firmware(icp);
+ 	if (ret)
+@@ -431,6 +454,12 @@ static int icp_boot(struct camss_icp *icp)
+ 	if (ret)
+ 		goto err_clk;
+ 
++	/* The handler must not run until clocks and HFI queues are ready. */
++	writel(CIRQ_ALL, icp->cirq_base + CIRQ_OB_CLEAR);
++	writel(CIRQ_CMD_CLEAR, icp->cirq_base + CIRQ_OB_CMD);
++	writel(CIRQ_ICP2HOSTINT | CIRQ_WDT_BITE_WS0, icp->cirq_base + CIRQ_OB_MASK);
++	enable_irq(icp->irq);
++
+ 	/* Start firmware via TrustZone */
+ 	ret = qcom_scm_pas_auth_and_reset(icp_res->pas_id);
+ 	if (ret) {
+@@ -542,14 +571,13 @@ static int icp_boot(struct camss_icp *icp)
+ 
+ 	return 0;
+ err_hfi:
+-	qcom_scm_pas_shutdown(icp_res->pas_id);
++	icp_stop_firmware(icp);
+ 	icp_hfi_deinit_queues(&icp->hfi);
+ err_clk:
+-	for (i = 0; i < icp_res->noc_num; i++) {
+-		if (icp->icc_path[i])
+-			icc_set_bw(icp->icc_path[i], 0, 0);
+-	}
+-	clk_bulk_disable_unprepare(icp_res->clk_num, icp->clks);
++	icp_power_off(icp);
++	return ret;
++err_pm:
++	pm_runtime_put_sync_suspend(icp->dev);
+ 	return ret;
+ }
+ 
+@@ -637,6 +665,37 @@ static const struct file_operations icp_lab_buf_fops = {
+ 	.llseek = default_llseek,
+ };
+ 
++/* Read-only DMA view for serialized lab readback after an IPE completion.
++ * Use the allocation's DMA API mapping: never create a cached physical alias.
++ * The file pins this module through the VMA lifetime. Manual driver unbind is
++ * disabled below because these lab buffers live until module removal.
++ */
++static int icp_lab_buf_mmap(struct file *f, struct vm_area_struct *vma)
++{
++	struct icp_lab_buf *b = f->private_data;
++	int ret;
++
++	/* mmap clears VM_SHARED for O_RDONLY; VM_MAYSHARE records MAP_SHARED. */
++	if (!(vma->vm_flags & VM_MAYSHARE) ||
++	    (vma->vm_flags & (VM_WRITE | VM_EXEC)))
++		return -EINVAL;
++	ret = debugfs_file_get(f->f_path.dentry);
++	if (ret)
++		return ret;
++	vm_flags_clear(vma, VM_MAYWRITE | VM_MAYEXEC);
++	vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP);
++	ret = dma_mmap_attrs(b->dev, vma, b->vaddr, b->alloc_iova,
++			     b->size, DMA_ATTR_FORCE_CONTIGUOUS);
++	debugfs_file_put(f->f_path.dentry);
++	return ret;
++}
++
++static const struct file_operations icp_lab_map_fops = {
++	.owner = THIS_MODULE,
++	.open = simple_open,
++	.mmap = icp_lab_buf_mmap,
++};
++
+ static ssize_t icp_lab_alloc_write(struct file *f, const char __user *ubuf,
+ 				   size_t len, loff_t *ppos)
+ {
+@@ -667,6 +726,7 @@ static ssize_t icp_lab_alloc_write(struct file *f, const char __user *ubuf,
+ 			struct iommu_domain *own = iommu_get_domain_for_dev(icp->dev);
+ 			phys_addr_t phys = own ? iommu_iova_to_phys(own, b->alloc_iova) : 0;
+ 			int m;
++			struct dentry *map;
+ 
+ 			/*
+ 			 * Buffers the ICP CPU reads must sit in IO region 1
+@@ -677,6 +737,7 @@ static ssize_t icp_lab_alloc_write(struct file *f, const char __user *ubuf,
+ 			b->iova = icp->lab_next;
+ 			icp->lab_next = ALIGN(icp->lab_next + size, SZ_1M);
+ 			b->size = size;
++			b->dev = icp->dev;
+ 			memset(b->vaddr, 0, size);
+ 			if (!phys || iommu_map(own, b->iova, phys, size,
+ 					       IOMMU_READ | IOMMU_WRITE, GFP_KERNEL))
+@@ -690,6 +751,11 @@ static ssize_t icp_lab_alloc_write(struct file *f, const char __user *ubuf,
+ 			}
+ 			snprintf(name, sizeof(name), "buf%d", i);
+ 			debugfs_create_file_size(name, 0600, icp->dbg, b, &icp_lab_buf_fops, size);
++			snprintf(name, sizeof(name), "map%d", i);
++			map = debugfs_create_file_unsafe(name, 0400, icp->dbg, b,
++						       &icp_lab_map_fops);
++			if (!IS_ERR(map))
++				i_size_write(d_inode(map), size);
+ 		}
+ 	}
+ 	mutex_unlock(&icp->lab_lock);
+@@ -808,7 +874,7 @@ static void icp_lab_exit(struct camss_icp *icp)
+ {
+ 	int i;
+ 
+-	debugfs_remove_recursive(icp->dbg);
++	/* Debugfs and firmware have already been stopped by remove(). */
+ 	/* drop the mirrored fixed-IOVA HFI maps (see icp_lab_init) */
+ 	{
+ 		struct icp_hfi_mem *hm = &icp->hfi.hfi_mem;
+@@ -889,7 +955,7 @@ static int camss_icp_probe(struct platform_device *pdev)
+ 	ret = dev_pm_domain_attach_list(&pdev->dev, &pd_data, &icp->pd_list);
+ 	if (ret < 0 && ret != -EEXIST) {
+ 		dev_err(&pdev->dev, "Failed to attach power domains: %d\n", ret);
+-		return ret;
++		goto err_mem;
+ 	}
+ 
+ 	for (i = 0; i < icp_res->clk_num; i++) {
+@@ -926,7 +992,7 @@ static int camss_icp_probe(struct platform_device *pdev)
+ 
+ 	ret = devm_request_threaded_irq(&pdev->dev, icp->irq, camss_icp_isr,
+ 					camss_icp_isr_thread,
+-					IRQF_TRIGGER_RISING | IRQF_ONESHOT,
++					IRQF_TRIGGER_RISING | IRQF_ONESHOT | IRQF_NO_AUTOEN,
+ 					"camss-icp", icp);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "Failed to request IRQ: %d\n", ret);
+@@ -937,43 +1003,43 @@ static int camss_icp_probe(struct platform_device *pdev)
+ 
+ 	ret = icp_boot(icp);
+ 	if (ret)
+-		goto err_pd;
++		goto err_pm;
+ 
+ 	ret = icp_hfi_core_init(&icp->hfi);
+ 	if (ret)
+-		goto err_pd;
++		goto err_boot;
+ 
+ 	icp_lab_init(icp);
+ 	return 0;
+ 
++err_boot:
++	icp_stop_firmware(icp);
++	icp_hfi_deinit_queues(&icp->hfi);
++	icp_power_off(icp);
++err_pm:
++	pm_runtime_disable(&pdev->dev);
+ err_pd:
+ 	if (icp->pd_list)
+ 		dev_pm_domain_detach_list(icp->pd_list);
+-
++err_mem:
++	of_reserved_mem_device_release(&pdev->dev);
+ 	return ret;
+ }
+ 
+ static void camss_icp_remove(struct platform_device *pdev)
+ {
+ 	struct camss_icp *icp = platform_get_drvdata(pdev);
+-	const struct camss_icp_resources *icp_res;
+-	int i;
+ 
+-	icp_res = icp->icp_res;
++	debugfs_remove_recursive(icp->dbg);
++	icp_stop_firmware(icp);
+ 	icp_lab_exit(icp);
+-	qcom_scm_pas_shutdown(icp_res->pas_id);
+-
+ 	icp_hfi_deinit_queues(&icp->hfi);
+-
+-	for (i = 0; i < icp_res->noc_num; i++) {
+-		if (icp->icc_path[i])
+-			icc_set_bw(icp->icc_path[i], 0, 0);
+-	}
+-	clk_bulk_disable_unprepare(icp_res->clk_num, icp->clks);
++	icp_power_off(icp);
++	pm_runtime_disable(&pdev->dev);
+ 
+ 	if (icp->pd_list)
+ 		dev_pm_domain_detach_list(icp->pd_list);
+-
++	of_reserved_mem_device_release(&pdev->dev);
+ }
+ 
+ static const char * const x1e80100_clk_names [] = {
+@@ -1034,6 +1100,8 @@ static struct platform_driver camss_icp_driver = {
+ 	.remove = camss_icp_remove,
+ 	.driver = {
+ 		.name = "camss-icp",
++		/* Lab mmap lifetime is tied to module/file ownership. */
++		.suppress_bind_attrs = true,
+ 		.of_match_table = camss_icp_of_match,
+ 	},
+ };

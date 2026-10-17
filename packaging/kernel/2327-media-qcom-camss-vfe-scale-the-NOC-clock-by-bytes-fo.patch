@@ -1,0 +1,59 @@
+From 2f16c22a65acdc7620c4593fa858a9d26c768c5a Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Tue, 13 Oct 2026 21:09:36 -0400
+Subject: [PATCH 2327/2368] media: qcom: camss: vfe: scale the NOC clock by
+ bytes for the PIX line too
+
+vfe_set_clock_rates() sizes the VFE core clock and the CAMNOC AXI clock
+from the same per-line rate. For the PIX line that rate is the sensor
+pixel clock, which is right for the core clock but not for the NOC: the
+NOC carries bytes, and on x1e80100 its only rate is 400 MHz, so any sensor
+faster than that (the IMX681 reports 548 MHz) fails with "Pixel clock is
+too high for VFE" before the pixel path can start. The RDI lines never
+hit this because they are scaled by bytes over the 64-bit bus.
+
+Apply the pixel clock to the core clock only and scale the PIX line like
+the RDI lines for the NOC.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 42930708cb9e61e20753879cb09d387cabdfe121)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 0921d1a3eebeedd8107c18e486006fcaca7cdd87..f5771f263026b1bb67e83d480305b4cdb246d8ed 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -1041,6 +1041,8 @@ static int vfe_set_clock_rates(struct vfe_device *vfe)
+ 		struct camss_clock *clock = &vfe->clock[i];
+ 
+ 		if (vfe_match_clock_names(vfe, clock) && vfe_check_clock_levels(clock)) {
++			/* The VFE core clock paces pixels; the NOC moves bytes */
++			bool core_clock = !strncmp(clock->name, "vfe", 3);
+ 			u64 min_rate = 0;
+ 			long rate;
+ 
+@@ -1048,7 +1050,7 @@ static int vfe_set_clock_rates(struct vfe_device *vfe)
+ 				u32 tmp;
+ 				u8 bpp;
+ 
+-				if (j == VFE_LINE_PIX) {
++				if (j == VFE_LINE_PIX && core_clock) {
+ 					tmp = pixel_clock[j];
+ 				} else {
+ 					struct vfe_line *l = &vfe->line[j];
+@@ -1122,6 +1124,7 @@ static int vfe_check_clock_rates(struct vfe_device *vfe)
+ 		struct camss_clock *clock = &vfe->clock[i];
+ 
+ 		if (vfe_match_clock_names(vfe, clock) && vfe_check_clock_levels(clock)) {
++			bool core_clock = !strncmp(clock->name, "vfe", 3);
+ 			u64 min_rate = 0;
+ 			unsigned long rate;
+ 
+@@ -1129,7 +1132,7 @@ static int vfe_check_clock_rates(struct vfe_device *vfe)
+ 				u32 tmp;
+ 				u8 bpp;
+ 
+-				if (j == VFE_LINE_PIX) {
++				if (j == VFE_LINE_PIX && core_clock) {
+ 					tmp = pixel_clock[j];
+ 				} else {
+ 					struct vfe_line *l = &vfe->line[j];

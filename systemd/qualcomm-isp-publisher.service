@@ -1,0 +1,14 @@
+[Unit]
+ConditionPathExists=/etc/qualcomm-isp/config.json
+ConditionPathExists=/usr/share/doc/linux-omarchy-isp/build-artifacts.json
+Description=Qualcomm ISP front camera node (PipeWire, starts the worker on demand)
+After=pipewire.service wireplumber.service
+Requires=pipewire.service
+
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/lib/qualcomm-isp/ipe-pipewire.py --standby
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

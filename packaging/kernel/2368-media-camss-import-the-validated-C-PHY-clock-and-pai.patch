@@ -1,0 +1,325 @@
+From 84ef6bd528015476a24aa380717c8434e7bbfa34 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Sat, 17 Oct 2026 15:43:24 -0400
+Subject: [PATCH 2368/2368] media: camss: import the validated C-PHY clock and
+ paired RAW statistics changes
+
+Bring the source up to the working SP11 snapshot: account for C-PHY throughput in clock selection, emit PIX frame-start events, share the sensor stream between RAW and PIX, and pair completions with the physical frame sequence.
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-680.c b/drivers/media/platform/qcom/camss/camss-csid-680.c
+index 83008cdb839872797c63737596a34acf70cfaa46..052236cc8956df0c30cd49ec25062dbdb4516fae 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-680.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-680.c
+@@ -712,15 +712,15 @@ static irqreturn_t csid_isr(int irq, void *dev)
+ 
+ 		if (val & CSID_IPP_IRQ_RUP_DONE)
+ 			csid_rup_complete(csid, CSID_IPP_PORT);
++		/* A coalesced completion belongs to the frame before this SOF. */
++		if (buf_done_val & BUF_DONE_IRQ_STATUS_IPP)
++			camss_buf_done(csid->camss, csid->id, CSID_IPP_PORT);
+ 		if (val & CSID_IPP_IRQ_CAMIF_SOF) {
+ 			csid->ipp_sof++;
+ 			vfe_680_pix_frame_start(csid->camss, csid->id);
+ 		}
+ 		if (val & CSID_IPP_IRQ_CAMIF_EOF)
+ 			csid->ipp_eof++;
+-
+-		if (buf_done_val & BUF_DONE_IRQ_STATUS_IPP)
+-			camss_buf_done(csid->camss, csid->id, CSID_IPP_PORT);
+ 	}
+ 
+ 	/* Issue clear command */
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-680.c b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+index c293d5244072ed3b1826931a942fab85f59e8ab9..21dd0c6bec4343d0c6abe4f59f3e434b04623e75 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-680.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+@@ -15,6 +15,7 @@
+ #include <linux/kstrtox.h>
+ #include <linux/moduleparam.h>
+ #include <linux/platform_device.h>
++#include <media/v4l2-event.h>
+ 
+ #include "camss.h"
+ #include "camss-csid.h"
+@@ -1107,17 +1108,29 @@ static void vfe_pix_apply_pokes(struct vfe_device *vfe)
+ void vfe_680_pix_frame_start(struct camss *camss, u8 vfe_id)
+ {
+ 	struct vfe_device *vfe;
++	struct vfe_line *line;
++	struct v4l2_event event = { .type = V4L2_EVENT_FRAME_SYNC };
++	unsigned long flags;
+ 
+ 	if (vfe_id >= camss->res->vfe_num)
+ 		return;
+ 	vfe = &camss->vfe[vfe_id];
+-	if (vfe->wm_output_map[VFE_LINE_PIX] != VFE_LINE_PIX || !pix_rearm)
++	if (vfe->wm_output_map[VFE_LINE_PIX] != VFE_LINE_PIX)
+ 		return;
++	line = &vfe->line[VFE_LINE_PIX];
+ 
+-	vfe_pix_program_output_stage(vfe, &vfe->line[VFE_LINE_PIX]);
+-	vfe_pix_program_iq(vfe, &vfe->line[VFE_LINE_PIX]);
+-	vfe_pix_apply_pokes(vfe);
+-	camss_reg_update(camss, vfe->id, VFE_LINE_PIX, false);
++	spin_lock_irqsave(&vfe->output_lock, flags);
++	event.u.frame_sync.frame_sequence = line->output.sequence++;
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++	if (pix_rearm) {
++		vfe_pix_program_output_stage(vfe, line);
++		vfe_pix_program_iq(vfe, line);
++		vfe_pix_apply_pokes(vfe);
++		camss_reg_update(camss, vfe->id, VFE_LINE_PIX, false);
++	}
++
++	/* Userspace changes after this event target a later shadow update. */
++	v4l2_event_queue(line->subdev.devnode, &event);
+ }
+ 
+ static void vfe_wm_update(struct vfe_device *vfe, u8 rdi, u32 addr,
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 233c7cd5fade79b5a56086b3673576103160a32d..41d3d099d63d57ae23082867ca88d40f010ce70f 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -19,7 +19,9 @@
+ #include <linux/spinlock_types.h>
+ #include <linux/spinlock.h>
+ #include <media/media-entity.h>
++#include <media/v4l2-common.h>
+ #include <media/v4l2-device.h>
++#include <media/v4l2-event.h>
+ #include <media/v4l2-subdev.h>
+ 
+ #include "camss-vfe.h"
+@@ -557,7 +559,14 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 	}
+ 
+ 	ready_buf->vb.vb2_buf.timestamp = ts;
+-	ready_buf->vb.sequence = output->sequence++;
++	if (line->id == VFE_LINE_PIX && ops == &vfe_ops_680)
++		ready_buf->vb.sequence = output->sequence - 1;
++	else if (ops == &vfe_ops_680 && !vfe_is_lite(vfe) &&
++		 vfe->wm_output_map[VFE_LINE_PIX] == VFE_LINE_PIX)
++		/* Paired RDI/PIX share the CSID's sensor-frame boundary. */
++		ready_buf->vb.sequence = vfe->line[VFE_LINE_PIX].output.sequence - 1;
++	else
++		ready_buf->vb.sequence = output->sequence++;
+ 
+ 	index = 0;
+ 	output->buf[0] = output->buf[1];
+@@ -1017,6 +1026,50 @@ static bool vfe_check_clock_levels(struct camss_clock *clock)
+ 	return false;
+ }
+ 
++/*
++ * The sensor's array timing clock includes blanking and can exceed the
++ * receiver's pixel throughput. Bound C-PHY traffic by its link capacity:
++ * link_freq is half the symbol rate, with 16 bits per 7 symbols per trio.
++ * Keep the existing timing-clock fallback when no link rate is available.
++ */
++static int vfe_get_pixel_clock(struct vfe_line *line, u64 *pixel_clock)
++{
++	struct media_entity *entity = &line->subdev.entity;
++	struct media_pad *pad;
++	struct v4l2_subdev *sensor;
++	struct csiphy_device *csiphy;
++	s64 link_freq;
++	u64 link_pixel_rate;
++	u8 bpp;
++	int ret;
++
++	ret = camss_get_pixel_clock(entity, pixel_clock);
++	if (ret)
++		return ret;
++
++	pad = camss_find_sensor_pad(entity);
++	if (!pad)
++		return 0;
++	sensor = media_entity_to_v4l2_subdev(pad->entity);
++	csiphy = sensor->host_priv;
++	if (!csiphy || !csiphy->cfg.csi2 || !csiphy->cfg.csi2->is_cphy)
++		return 0;
++
++	bpp = camss_format_get_bpp(line->formats, line->nformats,
++				   line->fmt[MSM_VFE_PAD_SINK].code);
++	if (!bpp || csiphy->cfg.csi2->lane_cfg.num_data <= 0)
++		return 0;
++	/* Do not estimate a link rate from the timing clock we are bounding. */
++	link_freq = v4l2_get_link_freq(pad, 0, 0);
++	if (link_freq <= 0)
++		return 0;
++
++	link_pixel_rate = div_u64(link_freq * 32ULL *
++				 csiphy->cfg.csi2->lane_cfg.num_data, 7 * bpp);
++	*pixel_clock = min(*pixel_clock, link_pixel_rate);
++	return 0;
++}
++
+ /*
+  * vfe_set_clock_rates - Calculate and set clock rates on VFE module
+  * @vfe: VFE device
+@@ -1031,8 +1084,7 @@ static int vfe_set_clock_rates(struct vfe_device *vfe)
+ 	int ret;
+ 
+ 	for (i = VFE_LINE_RDI0; i < vfe->res->line_num; i++) {
+-		ret = camss_get_pixel_clock(&vfe->line[i].subdev.entity,
+-					    &pixel_clock[i]);
++		ret = vfe_get_pixel_clock(&vfe->line[i], &pixel_clock[i]);
+ 		if (ret)
+ 			pixel_clock[i] = 0;
+ 	}
+@@ -1114,8 +1166,7 @@ static int vfe_check_clock_rates(struct vfe_device *vfe)
+ 	int ret;
+ 
+ 	for (i = VFE_LINE_RDI0; i < vfe->res->line_num; i++) {
+-		ret = camss_get_pixel_clock(&vfe->line[i].subdev.entity,
+-					    &pixel_clock[i]);
++		ret = vfe_get_pixel_clock(&vfe->line[i], &pixel_clock[i]);
+ 		if (ret)
+ 			pixel_clock[i] = 0;
+ 	}
+@@ -2048,8 +2099,23 @@ static int vfe_link_setup(struct media_entity *entity,
+ 	return 0;
+ }
+ 
++static int vfe_subscribe_event(struct v4l2_subdev *sd, struct v4l2_fh *fh,
++			       struct v4l2_event_subscription *sub)
++{
++	struct vfe_line *line = v4l2_get_subdevdata(sd);
++	struct vfe_device *vfe = to_vfe(line);
++
++	if (sub->type != V4L2_EVENT_FRAME_SYNC || sub->id ||
++	    line->id != VFE_LINE_PIX || vfe->res->hw_ops != &vfe_ops_680)
++		return -EINVAL;
++
++	return v4l2_event_subscribe(fh, sub, 16, NULL);
++}
++
+ static const struct v4l2_subdev_core_ops vfe_core_ops = {
+ 	.s_power = vfe_set_power,
++	.subscribe_event = vfe_subscribe_event,
++	.unsubscribe_event = v4l2_event_subdev_unsubscribe,
+ };
+ 
+ static const struct v4l2_subdev_video_ops vfe_video_ops = {
+@@ -2306,6 +2372,8 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 		v4l2_subdev_init(sd, &vfe_v4l2_ops);
+ 		sd->internal_ops = &vfe_v4l2_internal_ops;
+ 		sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++		if (i == VFE_LINE_PIX && vfe->res->hw_ops == &vfe_ops_680)
++			sd->flags |= V4L2_SUBDEV_FL_HAS_EVENTS;
+ 		if (i == VFE_LINE_PIX && vfe->res->is_lite == false)
+ 			snprintf(sd->name, ARRAY_SIZE(sd->name), "%s%d_%s",
+ 				 MSM_VFE_NAME, vfe->id, "pix");
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 3e9250f8e9712df577d0f5cb85a989404028dd89..0d23b0d191b9b3dd90ebb8a2b62231ac69d1ff83 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -249,6 +249,54 @@ static int video_prepare_streaming(struct vb2_queue *q)
+ 	return ret;
+ }
+ 
++struct camss_stream_user {
++	struct list_head list;
++	struct v4l2_subdev *subdev;
++	unsigned int count;
++};
++
++/* Start a shared sensor/receiver once and stop it after its last output. */
++static int video_set_stream(struct camss *camss, struct v4l2_subdev *subdev,
++			    bool enable)
++{
++	struct camss_stream_user *user;
++	int ret = 0;
++
++	mutex_lock(&camss->stream_lock);
++	list_for_each_entry(user, &camss->stream_users, list) {
++		if (user->subdev != subdev)
++			continue;
++		if (enable) {
++			user->count++;
++		} else if (!--user->count) {
++			ret = v4l2_subdev_call(subdev, video, s_stream, 0);
++			list_del(&user->list);
++			kfree(user);
++		}
++		goto unlock;
++	}
++	if (!enable) {
++		ret = -EINVAL;
++		goto unlock;
++	}
++	user = kzalloc(sizeof(*user), GFP_KERNEL);
++	if (!user) {
++		ret = -ENOMEM;
++		goto unlock;
++	}
++	ret = v4l2_subdev_call(subdev, video, s_stream, 1);
++	if (ret < 0 && ret != -ENOIOCTLCMD) {
++		kfree(user);
++		goto unlock;
++	}
++	user->subdev = subdev;
++	user->count = 1;
++	list_add(&user->list, &camss->stream_users);
++unlock:
++	mutex_unlock(&camss->stream_lock);
++	return ret;
++}
++
+ static void video_stop_subdevices(struct camss_video *video,
+ 				  const struct media_entity *stop_entity)
+ {
+@@ -271,7 +319,7 @@ static void video_stop_subdevices(struct camss_video *video,
+ 			break;
+ 
+ 		subdev = media_entity_to_v4l2_subdev(entity);
+-		ret = v4l2_subdev_call(subdev, video, s_stream, 0);
++		ret = video_set_stream(video->camss, subdev, false);
+ 		if (ret < 0 && ret != -ENOIOCTLCMD)
+ 			dev_err(video->camss->dev,
+ 				"Video pipeline stop failed: %d\n", ret);
+@@ -310,7 +358,7 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 		entity = pad->entity;
+ 		subdev = media_entity_to_v4l2_subdev(entity);
+ 
+-		ret = v4l2_subdev_call(subdev, video, s_stream, 1);
++		ret = video_set_stream(video->camss, subdev, true);
+ 		if (ret < 0 && ret != -ENOIOCTLCMD)
+ 			goto error_stop_subdevices;
+ 	}
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 500ffb858341cf5f2bc74230073f8b612f27b3ab..b8ced8f263c52e43ea1ca12de2f396a1792f6370 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -5449,6 +5449,8 @@ static int camss_probe(struct platform_device *pdev)
+ 	camss->res = of_device_get_match_data(dev);
+ 
+ 	atomic_set(&camss->ref_count, 0);
++	mutex_init(&camss->stream_lock);
++	INIT_LIST_HEAD(&camss->stream_users);
+ 	camss->dev = dev;
+ 	platform_set_drvdata(pdev, camss);
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index 7dc2fd9f03e0dc2ded8e4a603d6cfec4d8e6a62b..cf7c22628147b4265f71d08947679a3f481c04bb 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -11,6 +11,8 @@
+ #define QC_MSM_CAMSS_H
+ 
+ #include <linux/device.h>
++#include <linux/list.h>
++#include <linux/mutex.h>
+ #include <linux/types.h>
+ #include <media/v4l2-async.h>
+ #include <media/v4l2-device.h>
+@@ -141,6 +143,9 @@ struct camss {
+ 	struct icc_path *icc_path[ICC_SM8250_COUNT];
+ 	const struct camss_resources *res;
+ 	bool legacy_phy;
++	/* Shared upstream subdevices may feed both PIX and RDI video nodes. */
++	struct mutex stream_lock;
++	struct list_head stream_users;
+ };
+ 
+ struct camss_camera_interface {

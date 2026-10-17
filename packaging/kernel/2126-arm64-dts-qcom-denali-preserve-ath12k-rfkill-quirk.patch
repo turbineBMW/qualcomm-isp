@@ -1,0 +1,51 @@
+From 8eefcfb9d908ed847db195b1c1f5baaef0631685 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Sun, 19 Jul 2026 18:45:42 -0400
+Subject: [PATCH 2126/2165] arm64: dts: qcom: denali: preserve ath12k rfkill
+ quirk
+
+The WCN7850 firmware reaches mission mode but does not register a
+wireless PHY when ath12k configures its firmware rfkill input on
+Denali. Bluetooth is unaffected because it uses a separate UART
+transport.
+
+Restore the board property consumed by the Dale Whinham devicetree
+rfkill support and record the dependency in the provenance document.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 260daedb1ab937144bbb54301a7313f18cc22e16)
+
+diff --git a/Documentation/driver-api/media/sp11-camera-provenance.rst b/Documentation/driver-api/media/sp11-camera-provenance.rst
+index 64fb9346e4fcffc0d406b77259f5338b6b0f1689..a71858c5705e24296cb2e56f7c88b1b40a3a93fc 100644
+--- a/Documentation/driver-api/media/sp11-camera-provenance.rst
++++ b/Documentation/driver-api/media/sp11-camera-provenance.rst
+@@ -60,6 +60,15 @@ CAMSS and devicetree foundations
+   description uses hardware enumeration, standard firmware descriptions, and
+   observations made on the author's Surface Pro 11.
+ 
++Denali ath12k rfkill prerequisite
++  The ath12k devicetree ``disable-rfkill`` support is Dale Whinham's GPL
++  contribution, originally commit
++  ``d7e0b837ef4672f294af3d7f59eefe7a241371db`` with his authorship and
++  Signed-off-by trailer preserved.  The matching Denali property was
++  reintroduced after a one-shot hardware test showed that WCN7850 firmware
++  initialized but no wireless PHY registered without the quirk.  Bluetooth
++  continued to operate over its separate UART transport.
++
+ Review policy
+ -------------
+ 
+diff --git a/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi b/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
+index ce7d958ca68798defd27311da6eaddc337fcb34f..9cf8e1a5e0bfe2a9698915f0a6dbb0612672756c 100644
+--- a/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
++++ b/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
+@@ -950,6 +950,9 @@ wifi@0 {
+ 		compatible = "pci17cb,1107";
+ 		reg = <0x10000 0x0 0x0 0x0 0x0>;
+ 
++		/* Denali does not expose a usable firmware rfkill input. */
++		disable-rfkill;
++
+ 		vddaon-supply = <&vreg_pmu_aon_0p59>;
+ 		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+ 		vddwlmx-supply = <&vreg_pmu_wlmx_0p85>;

@@ -1,0 +1,20 @@
+{
+  "gstpipewire.c": "5761a099d13c99149b7e3fc5910ec32ae8f7c0a8",
+  "gstpipewireclock.c": "10607c3e7c94e647dfd6cd6184dcf744bdb7e38d",
+  "gstpipewireclock.h": "8b41598ef9672b661cd92d33e8ef0c0f4708724d",
+  "gstpipewirecore.c": "dcb45ef093adf6015e2f22bff535222355fdb99c",
+  "gstpipewirecore.h": "486b15325e4b809b2bdef705ee0a9b402ccc0281",
+  "gstpipewiredeviceprovider.c": "4a52bbdde96bea153c6cd141e5fbec7d7435e1b1",
+  "gstpipewiredeviceprovider.h": "c74ada091653fc6cf8f2c8fef57bf223612e30bf",
+  "gstpipewireformat.c": "fa97d3e015f2eeaa87f8d0d767d35d43cb3bc64a",
+  "gstpipewireformat.h": "2ecfedd09623e1d1e5c708fce9973ad0546e330a",
+  "gstpipewirepool.c": "5e201d3151544547c59ecf10fff93259812ac1a7",
+  "gstpipewirepool.h": "4953b689c10bb52e7a6bc8f1182d4d6a71cd4758",
+  "gstpipewiresink.c": "99235b1183c40a20239cefd44804ac8e2f75f1be",
+  "gstpipewiresink.h": "5816f7a159f9489b3304b4f377c115d4895ee1cd",
+  "gstpipewiresrc.c": "e3f525e064737325159f752efdc2f1c241c41cd6",
+  "gstpipewiresrc.h": "4b0f57e0e18eb5e1403d063ca2ec7b9e1ffdf662",
+  "gstpipewirestream.c": "68cb9be21e06dfc7fcaaed522644d3f210092517",
+  "gstpipewirestream.h": "23dc996a9b8fea51209b9d720a3d38466b66036a",
+  "meson.build": "1e39bcf89340131f7f307d4b86d929f75a8488ff"
+}

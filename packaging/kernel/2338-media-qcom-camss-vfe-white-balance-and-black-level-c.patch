@@ -1,0 +1,261 @@
+From 58513121df21bb186e9bb682ac5d6b4809fc4586 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Wed, 14 Oct 2026 08:08:36 -0400
+Subject: [PATCH 2338/2368] media: qcom: camss: vfe: white balance and black
+ level controls on the PIX line
+
+Expose what the driver programs into the IFE's white balance and colour
+transform as V4L2 controls on the PIX line subdev: red and blue balance
+and gain (the R, B and G gains, Q10 with 1024 as unity) and the sensor
+black level in 10-bit units. The values are applied at pixel path start
+and, through the new pix_set_params hardware op, whenever a control
+changes while streaming; on the 680 the gains go straight to the white
+balance module and the black level to the colour transform's input
+offsets. The pix_black_level module parameter goes away.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 0dd0e20fe4af12a5bea4d14a65eaeab2e6987e59)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-680.c b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+index c4796c02ea1afc67288227d896c279189a6fd9cf..d303bee22a8663969a3315196aa03dcaeaff4b24 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-680.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+@@ -43,9 +43,6 @@ static bool pix_rearm;
+ module_param(pix_rearm, bool, 0644);
+ MODULE_PARM_DESC(pix_rearm, "Re-apply the PIX output stage at every frame start");
+ 
+-static unsigned int pix_black_level;
+-module_param(pix_black_level, uint, 0644);
+-MODULE_PARM_DESC(pix_black_level, "Sensor black level subtracted on the PIX line, in 10-bit units");
+ MODULE_PARM_DESC(pix_rearm, "Re-apply the output stage programming at every frame start (not needed)");
+ 
+ #define VFE_PIX_EXT_SIZE	0xf000
+@@ -450,6 +447,36 @@ static int vfe_pix_program_output_stage(struct vfe_device *vfe, struct vfe_line
+ 	return 0;
+ }
+ 
++/*
++ * vfe_680_pix_set_params - Apply the PIX line's white balance and black level
++ * @line: the PIX line
++ *
++ * Called at start and whenever a control changes while streaming. The
++ * white balance gains are written to the module directly; the black level
++ * is the colour transform's input offset, which only moves luma since the
++ * chroma coefficients sum to zero.
++ */
++static void vfe_680_pix_set_params(struct vfe_line *line)
++{
++	struct vfe_device *vfe = to_vfe(line);
++	void __iomem *win = vfe_pix_ext_window(vfe, VFE_PIX_EXT_SIZE);
++	unsigned int i;
++
++	if (!win)
++		return;
++
++	vfe_pix_ext_write(vfe, win, VFE_PIX_WB + VFE_PIX_WB_GAIN_G,
++			  VFE_PIX_WB_GAIN(line->pix_params.wb_g));
++	vfe_pix_ext_write(vfe, win, VFE_PIX_WB + VFE_PIX_WB_GAIN_B,
++			  VFE_PIX_WB_GAIN(line->pix_params.wb_b));
++	vfe_pix_ext_write(vfe, win, VFE_PIX_WB + VFE_PIX_WB_GAIN_R,
++			  VFE_PIX_WB_GAIN(line->pix_params.wb_r));
++	for (i = 0; i < 3; i++)
++		vfe_pix_ext_write(vfe, win, VFE_PIX_CST + VFE_PIX_CST_GROUP(i) +
++				  VFE_PIX_CST_OFFSET_IN,
++				  VFE_PIX_CST_OFFSET(line->pix_params.black_level << 4));
++}
++
+ /*
+  * vfe_pix_program_iq - Program the image quality modules for NV12 output
+  * @vfe: VFE device
+@@ -485,15 +512,9 @@ static int vfe_pix_program_iq(struct vfe_device *vfe, struct vfe_line *line)
+ 	vfe_reg_write(vfe, VFE_TOP_CORE_CGC_OVD_1, ~0u);
+ 	vfe_reg_write(vfe, VFE_TOP_AHB_CGC_OVD, ~0u);
+ 
+-	base = VFE_PIX_WB;
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_WB_GAIN_G,
+-			  VFE_PIX_WB_GAIN(VFE_PIX_WB_GAIN_UNITY));
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_WB_GAIN_B,
+-			  VFE_PIX_WB_GAIN(VFE_PIX_WB_GAIN_UNITY));
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_WB_GAIN_R,
+-			  VFE_PIX_WB_GAIN(VFE_PIX_WB_GAIN_UNITY));
+-	vfe_pix_ext_write(vfe, win, base + VFE_PIX_WB_CFG_94, ~0u);
+-	vfe_pix_ext_write(vfe, win, base + VFE_CLC_MODULE_CFG, VFE_CLC_MODULE_CFG_EN);
++	vfe_680_pix_set_params(line);
++	vfe_pix_ext_write(vfe, win, VFE_PIX_WB + VFE_PIX_WB_CFG_94, ~0u);
++	vfe_pix_ext_write(vfe, win, VFE_PIX_WB + VFE_CLC_MODULE_CFG, VFE_CLC_MODULE_CFG_EN);
+ 
+ 	base = VFE_PIX_DEMOSAIC;
+ 	vfe_pix_ext_write(vfe, win, base + VFE_PIX_DEMOSAIC_INTERP_COEFF,
+@@ -516,7 +537,7 @@ static int vfe_pix_program_iq(struct vfe_device *vfe, struct vfe_line *line)
+ 		vfe_pix_ext_write(vfe, win, base + VFE_PIX_CST_OFFSET_OUT,
+ 				  VFE_PIX_CST_OFFSET(cst[i].offset));
+ 		vfe_pix_ext_write(vfe, win, base + VFE_PIX_CST_OFFSET_IN,
+-				  VFE_PIX_CST_OFFSET(pix_black_level << 4));
++				  VFE_PIX_CST_OFFSET(line->pix_params.black_level << 4));
+ 		vfe_pix_ext_write(vfe, win, base + VFE_PIX_CST_CLAMP_MIN, 0);
+ 		vfe_pix_ext_write(vfe, win, base + VFE_PIX_CST_CLAMP_MAX,
+ 				  VFE_PIX_CST_CLAMP(VFE_PIX_CST_OUT_MAX));
+@@ -983,6 +1004,7 @@ const struct vfe_hw_ops vfe_ops_680 = {
+ 	.vfe_halt = vfe_halt,
+ 	.vfe_wm_start = vfe_wm_start,
+ 	.vfe_wm_stop = vfe_wm_stop,
++	.pix_set_params = vfe_680_pix_set_params,
+ 	.vfe_buf_done = vfe_buf_done,
+ 	.vfe_wm_update = vfe_wm_update,
+ 	.reg_update = vfe_reg_update,
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index f5771f263026b1bb67e83d480305b4cdb246d8ed..c261107215bb3b06210cbe895bfc298514d5028c 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -2135,6 +2135,79 @@ static int vfe_bpl_align_pix(struct vfe_device *vfe)
+  *
+  * Return 0 on success or a negative error code otherwise
+  */
++/*
++ * The PIX line exposes the image quality parameters the driver programs
++ * into the IFE as controls: the white balance gains (Q10, 1024 is unity)
++ * as red/blue balance and gain (green), and the sensor black level.
++ */
++#define VFE_PIX_WB_UNITY	1024
++#define VFE_PIX_WB_MAX		8191
++
++static int vfe_pix_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct vfe_line *line = container_of(ctrl->handler, struct vfe_line, ctrls);
++	struct vfe_device *vfe = to_vfe(line);
++
++	switch (ctrl->id) {
++	case V4L2_CID_RED_BALANCE:
++		line->pix_params.wb_r = ctrl->val;
++		break;
++	case V4L2_CID_BLUE_BALANCE:
++		line->pix_params.wb_b = ctrl->val;
++		break;
++	case V4L2_CID_GAIN:
++		line->pix_params.wb_g = ctrl->val;
++		break;
++	case V4L2_CID_BLACK_LEVEL:
++		line->pix_params.black_level = ctrl->val;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	if (line->output.state == VFE_OUTPUT_ON && vfe->res->hw_ops->pix_set_params)
++		vfe->res->hw_ops->pix_set_params(line);
++
++	return 0;
++}
++
++static const struct v4l2_ctrl_ops vfe_pix_ctrl_ops = {
++	.s_ctrl = vfe_pix_s_ctrl,
++};
++
++static int vfe_pix_init_controls(struct vfe_line *line)
++{
++	struct v4l2_ctrl_handler *hdl = &line->ctrls;
++	int ret;
++
++	line->pix_params.wb_r = VFE_PIX_WB_UNITY;
++	line->pix_params.wb_g = VFE_PIX_WB_UNITY;
++	line->pix_params.wb_b = VFE_PIX_WB_UNITY;
++	line->pix_params.black_level = 0;
++
++	ret = v4l2_ctrl_handler_init(hdl, 4);
++	if (ret)
++		return ret;
++
++	v4l2_ctrl_new_std(hdl, &vfe_pix_ctrl_ops, V4L2_CID_RED_BALANCE,
++			  0, VFE_PIX_WB_MAX, 1, VFE_PIX_WB_UNITY);
++	v4l2_ctrl_new_std(hdl, &vfe_pix_ctrl_ops, V4L2_CID_BLUE_BALANCE,
++			  0, VFE_PIX_WB_MAX, 1, VFE_PIX_WB_UNITY);
++	v4l2_ctrl_new_std(hdl, &vfe_pix_ctrl_ops, V4L2_CID_GAIN,
++			  0, VFE_PIX_WB_MAX, 1, VFE_PIX_WB_UNITY);
++	v4l2_ctrl_new_std(hdl, &vfe_pix_ctrl_ops, V4L2_CID_BLACK_LEVEL,
++			  0, 1023, 1, 0);
++	if (hdl->error) {
++		ret = hdl->error;
++		v4l2_ctrl_handler_free(hdl);
++		return ret;
++	}
++
++	line->subdev.ctrl_handler = hdl;
++
++	return 0;
++}
++
+ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 			      struct v4l2_device *v4l2_dev)
+ {
+@@ -2170,6 +2243,14 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 			goto error_init;
+ 		}
+ 
++
++		if (i == VFE_LINE_PIX && vfe->res->hw_ops->pix_set_params) {
++			ret = vfe_pix_init_controls(&vfe->line[i]);
++			if (ret < 0) {
++				dev_err(dev, "Failed to init controls: %d\n", ret);
++				goto error_init;
++			}
++		}
+ 		pads[MSM_VFE_PAD_SINK].flags = MEDIA_PAD_FL_SINK;
+ 		pads[MSM_VFE_PAD_SRC].flags = MEDIA_PAD_FL_SOURCE;
+ 
+@@ -2239,6 +2320,7 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 
+ 		msm_video_unregister(video_out);
+ 		v4l2_device_unregister_subdev(sd);
++		v4l2_ctrl_handler_free(&vfe->line[i].ctrls);
+ 		media_entity_cleanup(&sd->entity);
+ 	}
+ 
+@@ -2262,6 +2344,7 @@ void msm_vfe_unregister_entities(struct vfe_device *vfe)
+ 
+ 		msm_video_unregister(video_out);
+ 		v4l2_device_unregister_subdev(sd);
++		v4l2_ctrl_handler_free(&vfe->line[i].ctrls);
+ 		media_entity_cleanup(&sd->entity);
+ 	}
+ }
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index 54a7cc2e62e9c7c06ef1fafe273b6cbfba179d8c..9739855b6bdd3f21358a9cbc7e7f10d140c53078 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -14,6 +14,7 @@
+ #include <linux/spinlock_types.h>
+ #include <media/media-entity.h>
+ #include <media/v4l2-device.h>
++#include <media/v4l2-ctrls.h>
+ #include <media/v4l2-subdev.h>
+ 
+ #include "camss-video.h"
+@@ -83,9 +84,19 @@ struct vfe_output {
+ 	struct completion reg_update;
+ };
+ 
++/* Image quality parameters of the PIX line, set through V4L2 controls */
++struct vfe_pix_params {
++	u16 wb_r;		/* white balance gains, Q10 */
++	u16 wb_g;
++	u16 wb_b;
++	u16 black_level;	/* in 10-bit units */
++};
++
+ struct vfe_line {
+ 	enum vfe_line_id id;
+ 	struct v4l2_subdev subdev;
++	struct v4l2_ctrl_handler ctrls;
++	struct vfe_pix_params pix_params;
+ 	struct media_pad pads[MSM_VFE_PADS_NUM];
+ 	struct v4l2_mbus_framefmt fmt[MSM_VFE_PADS_NUM];
+ 	struct v4l2_rect compose;
+@@ -117,6 +128,8 @@ struct vfe_hw_ops {
+ 	void (*vfe_wm_start)(struct vfe_device *vfe, u8 wm,
+ 			     struct vfe_line *line);
+ 	void (*vfe_wm_stop)(struct vfe_device *vfe, u8 wm);
++	/* pix_set_params - Apply line->pix_params to a running PIX line (optional) */
++	void (*pix_set_params)(struct vfe_line *line);
+ 	void (*vfe_buf_done)(struct vfe_device *vfe, int port_id);
+ 	void (*vfe_wm_update)(struct vfe_device *vfe, u8 wm, u32 addr,
+ 			      struct vfe_line *line);

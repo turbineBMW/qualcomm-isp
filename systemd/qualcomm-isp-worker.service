@@ -1,0 +1,18 @@
+[Unit]
+ConditionPathExists=/etc/qualcomm-isp/config.json
+ConditionPathExists=/usr/share/doc/linux-omarchy-isp/build-artifacts.json
+Description=Qualcomm ISP camera worker (privileged session on demand)
+Requires=qualcomm-isp-worker.socket
+After=qualcomm-isp-worker.socket
+
+[Service]
+# Capture uses the packaged runtime and the connecting desktop UID.
+# 30 fps until analogue gain is exhausted (knee 16); only then may the frame extend
+# toward 1/15 s, before any sensor digital gain.
+ExecStart=/usr/bin/python3 -I /usr/lib/qualcomm-isp/ipe-workerd.py --sessions /var/lib/qualcomm-isp/sessions --session-args --adaptive --centre-priority --quiet --retain-frames 3000 --slow-frame 2.0 --slow-frame-gain 16
+StateDirectory=qualcomm-isp
+RuntimeDirectory=qualcomm-isp/capture
+RuntimeDirectoryMode=0755
+# The socket unit owns /run/qualcomm-isp; removing it here breaks activation.
+KillMode=mixed
+TimeoutStopSec=90

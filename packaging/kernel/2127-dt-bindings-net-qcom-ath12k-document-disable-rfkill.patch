@@ -1,0 +1,29 @@
+From 290e0ac140fb18570ab58d1f8ac2eb14052a4d10 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Sun, 19 Jul 2026 18:46:35 -0400
+Subject: [PATCH 2127/2165] dt-bindings: net: qcom,ath12k: document
+ disable-rfkill
+
+Allow boards without a usable hardware rfkill input to request that
+the driver skip firmware rfkill configuration.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 7d9eb0e1efd1001f0a582806c825671a8063c550)
+
+diff --git a/Documentation/devicetree/bindings/net/wireless/qcom,ath12k.yaml b/Documentation/devicetree/bindings/net/wireless/qcom,ath12k.yaml
+index dc68dd59988fc757e8f53e809128cb4e820d66d1..6de83f18b63b1a99e4f7bde0e3519836d99ea30c 100644
+--- a/Documentation/devicetree/bindings/net/wireless/qcom,ath12k.yaml
++++ b/Documentation/devicetree/bindings/net/wireless/qcom,ath12k.yaml
+@@ -27,6 +27,12 @@ properties:
+       If present, a board or platform specific string used to lookup
+       usecase-specific firmware files for the device.
+ 
++  disable-rfkill:
++    type: boolean
++    description:
++      Skip firmware rfkill configuration on platforms that do not expose a
++      usable hardware rfkill input to the wireless device.
++
+   vddaon-supply:
+     description: VDD_AON supply regulator handle
+ 

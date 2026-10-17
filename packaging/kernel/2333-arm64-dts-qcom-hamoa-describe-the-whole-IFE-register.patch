@@ -1,0 +1,46 @@
+From 4995d07a84f4fad3e39a0006e8124ff3de3f88f2 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Tue, 13 Oct 2026 23:18:03 -0400
+Subject: [PATCH 2333/2368] arm64: dts: qcom: hamoa: describe the whole IFE
+ register block
+
+The two full IFEs occupy 60 KiB each (0x0ac62000 and 0x0ac71000 up to
+the next block); the image processing modules live above the first
+16 KiB, which is all the node mapped so far. Map the whole block, and let
+the camss PIX line use the base mapping when it covers the modules.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 2c9f5bdb3a46237025e8167327566c42b38cdeaf)
+
+diff --git a/arch/arm64/boot/dts/qcom/hamoa.dtsi b/arch/arm64/boot/dts/qcom/hamoa.dtsi
+index e1bc31eb96b74f95f84b10304c39916a6940c8d3..3add7038260b89da9c2b022fca2b633131516750 100644
+--- a/arch/arm64/boot/dts/qcom/hamoa.dtsi
++++ b/arch/arm64/boot/dts/qcom/hamoa.dtsi
+@@ -5823,8 +5823,8 @@ camss: isp@acb7000 {
+ 			      <0 0x0acf6000 0 0x1000>,
+ 			      <0 0x0acf7000 0 0x1000>,
+ 			      <0 0x0acf8000 0 0x1000>,
+-			      <0 0x0ac62000 0 0x4000>,
+-			      <0 0x0ac71000 0 0x4000>,
++			      <0 0x0ac62000 0 0xf000>,
++			      <0 0x0ac71000 0 0xf000>,
+ 			      <0 0x0acc7000 0 0x2000>,
+ 			      <0 0x0accb000 0 0x2000>;
+ 			reg-names = "csid0",
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-680.c b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+index 8808bc76660ccd4cfde289ca1b20546a1a854d66..1fdcc95c14a0104c9cb3e383479c7f4da5c908c1 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-680.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-680.c
+@@ -638,7 +638,11 @@ static void __iomem *vfe_pix_ext_window(struct vfe_device *vfe, u32 size)
+ 					 vfe->camss->res->vfe_res[vfe->id].reg[0]);
+ 	if (!r)
+ 		return NULL;
+-	ext[vfe->id] = ioremap(r->start, size);
++	/* a DT that describes the whole block needs no second mapping */
++	if (resource_size(r) >= size)
++		ext[vfe->id] = vfe->base;
++	else
++		ext[vfe->id] = ioremap(r->start, size);
+ 	return ext[vfe->id];
+ }
+ 

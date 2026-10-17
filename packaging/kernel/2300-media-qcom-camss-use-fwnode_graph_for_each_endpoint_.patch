@@ -1,0 +1,60 @@
+From bd61ed45c6f2eef3cb2b8e2f36cfdf73d0f8e734 Mon Sep 17 00:00:00 2001
+From: Frank Li <Frank.Li@nxp.com>
+Date: Thu, 25 Jun 2026 10:17:24 -0400
+Subject: [PATCH 2300/2368] media: qcom: camss: use
+ fwnode_graph_for_each_endpoint_scoped() to simplify code
+
+Use fwnode_graph_for_each_endpoint_scoped() to simplify code.
+
+No functional changes.
+
+Reviewed-by: Guoniu Zhou <guoniu.zhou@oss.nxp.com>
+Reviewed-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Reviewed-by: Andy Shevchenko <andriy.shevchenko@linux.intel.com>
+Reviewed-by: Laurent Pinchart <laurent.pinchart+renesas@ideasonboard.com>
+Signed-off-by: Frank Li <Frank.Li@nxp.com>
+Acked-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Signed-off-by: Sakari Ailus <sakari.ailus@linux.intel.com>
+(cherry picked from commit aedd77ea8168f00687c1248cdf115071e869cf93)
+(cherry picked from commit fb7c0dd35189b206b188608a04833339cb7cdce8)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 9fe3bc34495ea0cc96580e0fae96e57fb5d710ac..8cf209a0173c410a13d7ed28063ce6c7e1c0b703 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -4791,30 +4791,23 @@ static int camss_parse_endpoint_node(struct device *dev,
+ static int camss_parse_ports(struct camss *camss)
+ {
+ 	struct device *dev = camss->dev;
+-	struct fwnode_handle *fwnode = dev_fwnode(dev), *ep;
++	struct fwnode_handle *fwnode = dev_fwnode(dev);
+ 	int ret;
+ 
+-	fwnode_graph_for_each_endpoint(fwnode, ep) {
++	fwnode_graph_for_each_endpoint_scoped(fwnode, ep) {
+ 		struct camss_async_subdev *csd;
+ 
+ 		csd = v4l2_async_nf_add_fwnode_remote(&camss->notifier, ep,
+ 						      typeof(*csd));
+-		if (IS_ERR(csd)) {
+-			ret = PTR_ERR(csd);
+-			goto err_cleanup;
+-		}
++		if (IS_ERR(csd))
++			return PTR_ERR(csd);
+ 
+ 		ret = camss_parse_endpoint_node(dev, ep, csd);
+ 		if (ret < 0)
+-			goto err_cleanup;
++			return ret;
+ 	}
+ 
+ 	return 0;
+-
+-err_cleanup:
+-	fwnode_handle_put(ep);
+-
+-	return ret;
+ }
+ 
+ /*

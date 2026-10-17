@@ -1,0 +1,30 @@
+From 329c028b08193359b137b8b317df24a06474d3a7 Mon Sep 17 00:00:00 2001
+From: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Date: Fri, 31 Jul 2026 10:54:35 +0200
+Subject: [PATCH 2308/2368] media: qcom: camss: Add PM clock definitions for
+ QCM2290
+
+Provide the required CAMSS PM clock descriptors for the QCM2290
+platform. Register the top_ahb, ahb and axi clocks so they can be
+managed automatically through the PM clock framework (they are part
+of the camss-top group).
+
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Reviewed-by: Frank Li <Frank.Li@nxp.com>
+Signed-off-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
+(cherry picked from commit 907488352d411fa8b98b322aa8787fab28715131)
+(cherry picked from commit 26f2d7fbc23e5d172c47e25ff880597187c0248f)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 1514102d14564cec8434c61ba06949594874a9e5..7144ccea48d3a908121103bdf65e307fe4cc5726 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -5590,6 +5590,7 @@ static const struct camss_resources msm8996_resources = {
+ 
+ static const struct camss_resources qcm2290_resources = {
+ 	.version = CAMSS_2290,
++	.pm_clks = { "top_ahb", "ahb", "axi" },
+ 	.csiphy_res = csiphy_res_2290,
+ 	.csid_res = csid_res_2290,
+ 	.vfe_res = vfe_res_2290,

@@ -1,0 +1,95 @@
+From 75b01de3f67c8fa7e10420232e880c53b35e3872 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Wed, 14 Oct 2026 00:20:18 -0400
+Subject: [PATCH 2336/2368] media: qcom: camss: video: size the image clamp for
+ packed chroma planes
+
+__video_try_fmt() clamps a line-based plane's sizeimage to bytesperline
+times CAMSS_FRAME_MAX_HEIGHT_PIX. A format that packs the chroma below
+the luma in the same plane (NV12, NV21, NV16, NV61) needs more lines than
+the frame height, so for a 4224x3136 NV12 frame the computed 19869696
+bytes were cut to 17301504, the buffers came out smaller than what the
+write masters produce, and the chroma write ran off the end of the
+buffer into an unmapped IOVA:
+
+  arm-smmu 15000000.iommu: Unhandled context fault: fsr=0x402,
+  iova=0xf92ef300, fsynr=0x590012, cbfrsynra=0x820, cb=7
+
+Scale the clamp by the plane's vertical subsampling ratio, which is the
+same factor the size is computed with.
+
+Signed-off-by: Brandon Williams <turbine.bmw@gmail.com>
+(cherry picked from commit 87c90c004971671f06370ef26758136a680c5c0c)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index a2fa11005d18956854ccb3af8cf2bc81677fdb6a..3e9250f8e9712df577d0f5cb85a989404028dd89 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -468,6 +468,22 @@ static int video_g_fmt(struct file *file, void *fh, struct v4l2_format *f)
+ 	return 0;
+ }
+ 
++/*
++ * camss_video_max_lines - Lines a plane can hold at the maximum PIX height
++ * @fi: format
++ * @plane: plane index
++ *
++ * A plane that packs chroma below the luma (NV12, NV21 and the like) holds
++ * more lines than the frame height, by the plane's vertical subsampling
++ * ratio, so the size clamp must allow for them.
++ */
++static u32 camss_video_max_lines(const struct camss_format_info *fi,
++				 unsigned int plane)
++{
++	return CAMSS_FRAME_MAX_HEIGHT_PIX / fi->vsub[plane].numerator *
++		fi->vsub[plane].denominator;
++}
++
+ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ {
+ 	unsigned int alignment = video->bpl_alignment;
+@@ -482,16 +498,6 @@ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ 
+ 	pix_mp = &f->fmt.pix_mp;
+ 
+-	if (video->line_based)
+-		for (i = 0; i < pix_mp->num_planes && i < 3; i++) {
+-			p = &pix_mp->plane_fmt[i];
+-			bytesperline[i] = clamp_t(u32, p->bytesperline,
+-						  1, 65528);
+-			sizeimage[i] = clamp_t(u32, p->sizeimage,
+-					       bytesperline[i],
+-					       bytesperline[i] * CAMSS_FRAME_MAX_HEIGHT_PIX);
+-		}
+-
+ 	for (j = 0; j < video->nformats; j++)
+ 		if (pix_mp->pixelformat == video->formats[j].pixelformat)
+ 			break;
+@@ -500,6 +506,17 @@ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ 		j = 0; /* default format */
+ 
+ 	fi = &video->formats[j];
++
++	if (video->line_based)
++		for (i = 0; i < pix_mp->num_planes && i < 3; i++) {
++			p = &pix_mp->plane_fmt[i];
++			bytesperline[i] = clamp_t(u32, p->bytesperline,
++						  1, 65528);
++			sizeimage[i] = clamp_t(u32, p->sizeimage,
++					       bytesperline[i],
++					       bytesperline[i] *
++					       camss_video_max_lines(fi, i));
++		}
+ 	width = pix_mp->width;
+ 	height = pix_mp->height;
+ 
+@@ -536,7 +553,8 @@ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ 						  1, 65528);
+ 			p->sizeimage = clamp_t(u32, p->sizeimage,
+ 					       p->bytesperline,
+-					       p->bytesperline * CAMSS_FRAME_MAX_HEIGHT_PIX);
++					       p->bytesperline *
++					       camss_video_max_lines(fi, i));
+ 			lines = p->sizeimage / p->bytesperline;
+ 
+ 			if (p->bytesperline < bytesperline[i])

@@ -1,0 +1,88 @@
+version = 1
+
+[[annotations]]
+path = [".gitignore", "README.md", "docs/**", "profiles/**", "systemd/**", "tools/**", "runtime/**", "packaging/config.json", "packaging/libcamera/PKGBUILD", "packaging/runtime/PKGBUILD", "vendor/*-source.json", "vendor/runtime-origin.json", "packaging/kernel/ISP-SOURCES.json", "packaging/kernel/omarchy-isp-lab.conf"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Brandon Williams <turbine.bmw@gmail.com>"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["packaging/kernel/PKGBUILD", "packaging/kernel/README.md", "packaging/kernel/UPGRADING-7.3.md", "packaging/kernel/.omarchy/package.json"]
+precedence = "closest"
+SPDX-FileCopyrightText = ["David Heinemeier Hansson", "The Omarchy Authors", "The Arch Linux contributors", "2026 Brandon Williams <turbine.bmw@gmail.com>"]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["packaging/kernel/*.patch", "packaging/kernel/config.aarch64"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
+SPDX-License-Identifier = "GPL-2.0-only"
+SPDX-FileComment = "Patch collection distributed under the Linux kernel GPLv2 terms. Embedded per-file notices, permissive license alternatives, and syscall exceptions are retained unchanged and still govern those portions. This annotation prevents historical/removed SPDX lines inside diffs being mistaken for the patch container license."
+
+[[annotations]]
+path = ["packaging/kernel/*.sig", "packaging/kernel/keys/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "NONE"
+SPDX-License-Identifier = "LicenseRef-Not-Copyrightable"
+SPDX-FileComment = "Generated cryptographic signatures and public keys; not executable or private keys."
+
+[[annotations]]
+path = "vendor/libcamera-working.patch"
+precedence = "override"
+SPDX-FileCopyrightText = ["2026 Brandon Williams <turbine.bmw@gmail.com>", "The libcamera contributors; see the pinned upstream source and its retained per-file notices"]
+SPDX-License-Identifier = "GPL-2.0-or-later AND LGPL-2.1-or-later"
+SPDX-FileComment = "Combined patch contains GPL cam and LGPL core changes. Per-file licenses remain controlling."
+
+[[annotations]]
+path = "vendor/pipewire-working.patch"
+precedence = "override"
+SPDX-FileCopyrightText = ["2018 Wim Taymans", "2026 Brandon Williams <turbine.bmw@gmail.com>"]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "vendor/pipewire-gst/upstream.json"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Brandon Williams <turbine.bmw@gmail.com>"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["packaging/kernel/0280-mm-updates.patch", "packaging/kernel/0510-sound-updates.patch", "packaging/kernel/0560-input-updates.patch", "packaging/kernel/0740-hwmon-updates.patch"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
+SPDX-License-Identifier = "(GPL-2.0-only) AND (GPL-2.0-or-later)"
+SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
+
+[[annotations]]
+path = ["packaging/kernel/0511-asoc-updates.patch"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
+SPDX-License-Identifier = "((GPL-2.0-only OR BSD-3-Clause)) AND ((GPL-2.0-only OR MIT)) AND (GPL-2.0-only) AND (GPL-2.0-only WITH Linux-syscall-note) AND (GPL-2.0-or-later)"
+SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
+
+[[annotations]]
+path = ["packaging/kernel/0800-platform-updates.patch"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
+SPDX-License-Identifier = "(GPL-2.0-only) AND (GPL-2.0-or-later) AND (GPL-2.0-or-later WITH Linux-syscall-note)"
+SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
+
+[[annotations]]
+path = ["packaging/kernel/1030-n1x-audio.patch"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
+SPDX-License-Identifier = "((GPL-2.0-only OR BSD-3-Clause)) AND (GPL-2.0-only)"
+SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
+
+[[annotations]]
+path = ["packaging/kernel/2117-dt-bindings-input-Document-hid-over-spi-DT-schema.patch", "packaging/kernel/2121-dt-bindings-media-add-OV13858-and-VD55G0-sensors.patch"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
+SPDX-License-Identifier = "((GPL-2.0-only OR BSD-2-Clause)) AND (GPL-2.0-only)"
+SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
+
+[[annotations]]
+path = ["packaging/kernel/2346-media-qcom-camss-gamma-table-and-colour-matrix-contr.patch"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
+SPDX-License-Identifier = "(GPL-2.0-only) AND (GPL-2.0-only WITH Linux-syscall-note)"
+SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."

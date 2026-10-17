@@ -1,0 +1,28 @@
+{
+  "base_commit": "aeae1f0c7155ae2a175f27b571496f87943197f9",
+  "upstream": "https://github.com/jwrdegoede/libcamera",
+  "development_fork": "https://github.com/turbineBMW/libcamera",
+  "modified_files": {
+    "include/libcamera/internal/v4l2_device.h": "1aec3081ee3f957b45d4da9b5badfa7da92579ff2a98b206ce380aa39d468936",
+    "src/apps/cam/camera_session.cpp": "497cdd4261ca363278a27be5a30ac700349a4e668a6ed0647cb48421e1bf35d4",
+    "src/apps/cam/meson.build": "484b0049a291b2725f041043f30d64896c4c0027d12c5b7a4f1a704105dc927e",
+    "src/libcamera/pipeline/camss/camss.cpp": "8618837d97b1215af4526cc240af3ca178b910b2f589eecc6334b57d35ed9ba4",
+    "src/libcamera/pipeline/camss/camss_csi.cpp": "93633eb149b308f49ec241a87abde1eb070f54c41ce284038cc218ff5618857a",
+    "src/libcamera/pipeline/camss/camss_csi.h": "aaafcdec9dbfad97b38be6ebbf75b82c034cec245c36b3484169845a9edfd2c3",
+    "src/libcamera/pipeline/camss/camss_isp_inline.cpp": "4d0005aec748d81e3d24924be5b895b3a70c9f88aeee8afcdcf2d2615704bdf7",
+    "src/libcamera/pipeline/camss/camss_isp_inline.h": "fdf01812d21817ed5bd5131cc5f13b5a1874158e187cdfbcbc9b491831eb9339",
+    "src/libcamera/pipeline/camss/meson.build": "1b42ddf972c5dc0f1559f894235bb47992c37f30a21d4bd3e373edca30334038",
+    "src/libcamera/v4l2_device.cpp": "3a90e8266f6494f65c8622b2fba57ad8cb59cee618a196a920d9b0de43e35ac4",
+    "src/apps/cam/lease_sink.cpp": "f4fb90b5f952a2ffce256f55c9281bbaea4bc13a684b7dca3bb812fd69098de2",
+    "src/apps/cam/lease_sink.h": "d93b22baa7eb746fd8b3e22ef071f20f4b40cfafd08f72697d47a48e22f454b5",
+    "src/libcamera/pipeline/camss/camss_bayer_awb.h": "55569c5086e61ceeca7f3862355a3495d80269b97720e22c98da719c1f11b824",
+    "src/libcamera/pipeline/camss/camss_highlight_ae.h": "9a7cd051c40fd190a8694e1e53d7732322b9e60cf53aa2da8fa12e8271b4fa24",
+    "src/libcamera/pipeline/camss/camss_raw_stats.cpp": "53afa5c53f1c545ece38b300355973fb393ab3ef601ea24de87134f7e8919edd",
+    "src/libcamera/pipeline/camss/camss_raw_stats.h": "97a428f2247ce6b7dae0cc796f77c3a9b0ea5678895901ace36c48e745f511f0"
+  },
+  "snapshot_sha256": "c08effb10ff267f612fa69c7500d1d29f8bc3496ab7b3ce17caadb941efddcf9",
+  "source_url": "https://github.com/turbineBMW/libcamera/archive/aeae1f0c7155ae2a175f27b571496f87943197f9.tar.gz",
+  "source_sha256": "a8d3b2c225d4c2b87a9b8149c6e34ab0943e3df67232c8879aedfb397e9a52cd",
+  "patch_sha256": "8af163523d042301f4b0ff153ab98a8010421547aecda129a55d871c8e400bff",
+  "reconstruction": "Pinned public archive plus complete patch matches every file of the accepted source snapshot."
+}

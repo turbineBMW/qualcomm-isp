@@ -1,0 +1,58 @@
+From ae4e5c4f625ea02e520a0a06a00b750456af6461 Mon Sep 17 00:00:00 2001
+From: Bryan O'Donoghue <bod@kernel.org>
+Date: Fri, 3 Jul 2026 12:44:44 +0100
+Subject: [PATCH 2356/2368] media: qcom: camss: Switch on ICP and BPS as make
+ options
+
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
+(cherry picked from commit 782e70f1ad20204721b37ade4a33837e76ac3b86)
+(cherry picked from commit 3b8befe0a0a4d08a44014449de489ecd3389e856)
+
+diff --git a/drivers/media/platform/qcom/camss/Kconfig b/drivers/media/platform/qcom/camss/Kconfig
+index b51745c942c9fd71a95d09993213bde4b7e877e2..d8261c70f9729611c61850179aa8c3492e5ce79b 100644
+--- a/drivers/media/platform/qcom/camss/Kconfig
++++ b/drivers/media/platform/qcom/camss/Kconfig
+@@ -9,3 +9,27 @@ config VIDEO_QCOM_CAMSS
+ 	select V4L2_FWNODE
+ 	select GENERIC_PHY
+ 	imply PHY_QCOM_MIPI_CSI2
++
++config VIDEO_QCOM_CAMSS_HARD_ISP
++	tristate "Qualcomm CAMSS Hardware ISP (ICP/IPE/BPS)"
++	depends on VIDEO_QCOM_CAMSS
++	depends on QCOM_MDT_LOADER
++	depends on QCOM_SCM
++	depends on VIDEO_DEV
++	select VIDEOBUF2_DMA_CONTIG
++	select V4L2_MEM2MEM_DEV
++	help
++	  Enable support for the hardware ISP found in Qualcomm camera
++	  subsystems on SoCs like X1E80100. This includes:
++
++	  - ICP (Image Control Processor): Tensilica LX7 that runs
++	    camera firmware and provides HFI interface
++	  - IPE (Image Processing Engine): V4L2 m2m device for noise
++	    reduction, sharpening, and scaling
++	  - BPS (Bayer Processing Segment): V4L2 m2m device for
++	    demosaicing raw Bayer data
++
++	  If unsure, say N.
++
++	  To compile this as modules, choose M here. The modules will
++	  be called camss-icp, camss-ipe, and camss-bps, respectively.
+diff --git a/drivers/media/platform/qcom/camss/Makefile b/drivers/media/platform/qcom/camss/Makefile
+index 27898b3cc7d3c8f275567f81f0952e2a0e18f189..ae5fe78b4da41d688fb4cec313646e93f1d3e1fc 100644
+--- a/drivers/media/platform/qcom/camss/Makefile
++++ b/drivers/media/platform/qcom/camss/Makefile
+@@ -31,3 +31,11 @@ qcom-camss-objs += \
+ 		camss-video.o
+ 
+ obj-$(CONFIG_VIDEO_QCOM_CAMSS) += qcom-camss.o
++
++qcom-camss-icp-objs += camss-icp.o \
++		       camss-icp-hfi.o
++obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-icp.o
++
++qcom-camss-bps-objs += camss-bps.o \
++		       camss-bps-cmd.o
++obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-bps.o

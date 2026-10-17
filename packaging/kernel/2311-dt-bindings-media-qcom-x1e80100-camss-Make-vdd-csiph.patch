@@ -1,0 +1,31 @@
+From a32b1762019ade5d3a7e4197d93ec4ebbde6fe0b Mon Sep 17 00:00:00 2001
+From: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Date: Thu, 17 Sep 2026 14:20:27 +0100
+Subject: [PATCH 2311/2368] dt-bindings: media: qcom,x1e80100-camss: Make
+ vdd-csiphy supplies optional
+
+The vdd-csiphy supplies power the CSIPHY blocks. CSIPHYs may be
+described as standalone phy nodes carrying their own supplies, in which
+case the CAMSS node has none. Make the supplies optional; existing DTS
+remain valid.
+
+Reviewed-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Reviewed-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Signed-off-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
+(cherry picked from commit 8eadfa9c13f409a5941e1f8252fad035654aa495)
+(cherry picked from commit 034d9b30d2447ad5f308316ffdc416e117773275)
+
+diff --git a/Documentation/devicetree/bindings/media/qcom,x1e80100-camss.yaml b/Documentation/devicetree/bindings/media/qcom,x1e80100-camss.yaml
+index 534b3c810fa8a2e6d5766c5168bfb1abd4e7781f..6fd46f85e7e8bd006504b100103edaa7a9e6d324 100644
+--- a/Documentation/devicetree/bindings/media/qcom,x1e80100-camss.yaml
++++ b/Documentation/devicetree/bindings/media/qcom,x1e80100-camss.yaml
+@@ -186,8 +186,6 @@ required:
+   - iommus
+   - power-domains
+   - power-domain-names
+-  - vdd-csiphy-0p8-supply
+-  - vdd-csiphy-1p2-supply
+   - ports
+ 
+ additionalProperties: false

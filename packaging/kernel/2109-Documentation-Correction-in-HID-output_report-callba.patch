@@ -1,0 +1,30 @@
+From 674196e7ab354064c355ca4e2c283baf8e1f9833 Mon Sep 17 00:00:00 2001
+From: Jarrett Schultz <jaschultz@microsoft.com>
+Date: Tue, 9 Jun 2026 04:40:52 +0000
+Subject: [PATCH 2109/2165] Documentation: Correction in HID output_report
+ callback description.
+
+Originally output_report callback was described as must-be asynchronous,
+but that is not the case in some implementations, namely i2c-hid.
+Correct the documentation to say that it may be asynchronous.
+
+Signed-off-by: Dmitry Antipov <dmanti@microsoft.com>
+Reviewed-by: Dmitry Torokhov <dmitry.torokhov@gmail.com>
+Signed-off-by: Jingyuan Liang <jingyliang@chromium.org>
+(cherry picked from commit 49d9c7679796d9971b18307ed9659f104fcee27d)
+
+diff --git a/Documentation/hid/hid-transport.rst b/Documentation/hid/hid-transport.rst
+index 6f1692da296cf2f6b49cbf96c222e022ffc27162..2008cf432af128d938b0086751374f25a4b7f65c 100644
+--- a/Documentation/hid/hid-transport.rst
++++ b/Documentation/hid/hid-transport.rst
+@@ -327,8 +327,8 @@ The available HID callbacks are:
+ 
+    Send raw output report via intr channel. Used by some HID device drivers
+    which require high throughput for outgoing requests on the intr channel. This
+-   must not cause SET_REPORT calls! This must be implemented as asynchronous
+-   output report on the intr channel!
++   must not cause SET_REPORT calls! This call might be asynchronous, so the
++   caller should not expect an immediate response!
+ 
+    ::
+ 
