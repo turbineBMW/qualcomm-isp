@@ -44,7 +44,6 @@ def main():
     prep = out / 'preparation'
     shutil.copytree(SOURCE / 'preparation', prep, ignore=shutil.ignore_patterns('__pycache__'))
     (out / 'runtime').symlink_to(SOURCE / 'runtime', target_is_directory=True)
-    subprocess.run(['patch', '--batch', '-p1', '-d', str(out), '-i', str(HERE / 'preparation.patch')], check=True)
     local_dll, local_tuning = out / 'QcDeviceMFT8380.dll', out / 'tuning.bin'
     shutil.copyfile(dll, local_dll)
     shutil.copyfile(tuning, local_tuning)
@@ -54,8 +53,8 @@ def main():
     spec = importlib.util.spec_from_file_location('rear_inputs', prep / 'inputs.py')
     inputs = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(inputs)
-    derived = inputs.prepare(local_tuning, out / 'inputs')
-    profile = inputs.ife_profile(local_tuning)
+    derived = inputs.prepare(local_tuning, out / 'inputs', sensor='ov13858')
+    profile = inputs.ife_profile(local_tuning, sensor='ov13858')
     profile['ae']['raw_highlights'] = False
     profile['awb'] = dict(blue_bias=1, warmth=0, neutral_ratio=1)
     (out / 'ife.yaml').write_text(yaml.safe_dump(profile, sort_keys=False))

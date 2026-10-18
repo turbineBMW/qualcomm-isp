@@ -42,7 +42,7 @@ class Session:
         cmd = ['python3', '-I', str(HERE / 'session.py'),
                '--publish', '--handoff-fds', f'{memfd},{control_fd}',
                '--seconds', str(args.max_seconds), '--out', str(self.dir),
-               '--state-file', str(Path(args.sessions).parent / 'last-controls.json'),
+               '--state-file', str(getattr(args, 'state_file', None) or Path(args.sessions).parent / 'last-controls.json'),
                *args.session_args]
         env = dict(os.environ, QUALCOMM_ISP_CAPTURE_UID=str(args.capture_uid))
         self.process = subprocess.Popen(cmd, pass_fds=(memfd, control_fd), stdout=self.log,
@@ -179,6 +179,7 @@ def main():
     p.add_argument('--owner', type=int, help='uid allowed to connect when binding the socket here (mode 0600)')
     p.add_argument('--group', type=int, help='gid allowed to connect (mode 0660)')
     p.add_argument('--sessions', default='/var/lib/qualcomm-isp/sessions')
+    p.add_argument('--state-file', type=Path, help='Separate warm-start controls for this camera')
     p.add_argument('--max-seconds', type=int, default=0, help='Hard session limit passed to ipe-live (0 = none)')
     p.add_argument('--start-timeout', type=float, default=60)
     p.add_argument('--session-args', nargs=argparse.REMAINDER,

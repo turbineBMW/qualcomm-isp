@@ -1,6 +1,6 @@
 pkgname=qualcomm-isp-runtime
 pkgver=0.1
-pkgrel=6
+pkgrel=7
 pkgdesc='Experimental Qualcomm ISP camera runtime with explicit board profiles'
 arch=('aarch64')
 license=('MIT')
@@ -9,7 +9,7 @@ depends=('python' 'python-numpy' 'python-gobject' 'gstreamer' 'gst-plugins-base'
 makedepends=('pkgconf' 'gcc' 'libpipewire')
 backup=('etc/qualcomm-isp/config.json')
 source=('qualcomm-isp-runtime.tar.gz')
-sha256sums=('479766616288c3842929a4089753a38b28257e1ee71bb17051c7fe0a1b03cecf')
+sha256sums=('e49a596eecadf2c143390a8c1e51e49ed7fe56493df3a44ebd95b648e4cec24f')
 options=('!debug')
 build() {
   cd qualcomm-isp
@@ -22,6 +22,7 @@ check() {
   python -I test-ipe-workerd.py
   python -I test-ipe-capture-lease.py
   python -I test-pd10-fast.py
+  python -I test-sleep.py
 }
 package() {
   cd qualcomm-isp
@@ -31,12 +32,14 @@ package() {
     install -m644 "$f" "$pkgdir/usr/lib/qualcomm-isp/"
   done
   install -m755 runtime/pd10-fast.so bridge/libgstpipewire.so "$pkgdir/usr/lib/qualcomm-isp/"
-  install -Dm644 profiles/surface-pro-11-denali-oled.json "$pkgdir/usr/share/qualcomm-isp/profiles/surface-pro-11-denali-oled.json"
+  install -d "$pkgdir/usr/share/qualcomm-isp/profiles"
+  install -m644 profiles/*.json "$pkgdir/usr/share/qualcomm-isp/profiles/"
   install -Dm644 packaging/config.json "$pkgdir/etc/qualcomm-isp/config.json"
-  for f in systemd/qualcomm-isp-worker.* systemd/qualcomm-isp-sleep.service; do
+  for f in systemd/*worker.* systemd/qualcomm-isp-sleep.service; do
     install -Dm644 "$f" "$pkgdir/usr/lib/systemd/system/$(basename "$f")"
   done
-  install -Dm644 systemd/qualcomm-isp-publisher.service "$pkgdir/usr/lib/systemd/user/qualcomm-isp-publisher.service"
+  install -d "$pkgdir/usr/lib/systemd/user"
+  install -m644 systemd/*publisher.service "$pkgdir/usr/lib/systemd/user/"
   install -Dm644 LICENSES/MIT.txt "$pkgdir/usr/share/licenses/$pkgname/MIT.txt"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 vendor/pipewire-gst/COPYING "$pkgdir/usr/share/licenses/$pkgname/pipewire-COPYING"

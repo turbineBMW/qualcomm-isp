@@ -3,8 +3,9 @@
 First hardware proof on Surface Pro 11 Denali OLED, 2026-10-17: the rear camera
 produces correctly ordered 3840x2160 NV12 through IFE, and those frames pass
 through IPE with locally generated rear-sensor programs. The packaged front
-camera remains the qualified desktop path. This experiment does not install a
-rear PipeWire publisher or replace the installed kernel/libcamera.
+camera remains the qualified desktop path. The updated packages include an optional rear PipeWire publisher;
+[installation](../../docs/INSTALL.md#experimental-ov13858-rear-isp) is explicit.
+The bounded experiment scripts do not install packages or replace the kernel.
 
 ## Findings
 
@@ -28,8 +29,10 @@ rear PipeWire publisher or replace the installed kernel/libcamera.
   `LIBCAMERA_CAMSS_OV13858_ISP=1` only alongside the matching CSID setting.
 - Rear tuning differs structurally from the front: TF reserve selector 4,
   DSX module occurrence 1, one TMC region, three IPE gamma rows, two CCM lux
-  rows and two CV lux rows. `preparation.patch` applies these changes to a
-  private copy. It must not be used to generate front-camera assets.
+  rows and two CV lux rows. `preparation/sensor_layout.py` selects these shapes by exact tuning hash.
+  `prepare.py --sensor ov13858` generates a complete rear adaptive bank; the
+  default remains IMX681. Three front grid entries (18 hardware files each)
+  and the IFE profile still match the accepted front assets.
 
 The register investigation used local driver disassembly plus hardware tests.
 Disassembly, Windows files, extracted programs and captured images stay outside
@@ -67,16 +70,14 @@ python -I "$REPO/experiments/ov13858/prepare-anchor.py" \
 ```
 
 Prepare the pinned baseline libcamera with `makepkg --nobuild` in
-`packaging/libcamera` if it has not already been prepared. Copy that patched
-source into the private work directory, then apply the incremental rear patch.
+`packaging/libcamera` if it has not already been prepared. The recipe now applies the incremental rear patch too. Copy that prepared
+source into the private work directory.
 The baseline archive is commit `aeae1f0c7155ae2a175f27b571496f87943197f9` plus
 `vendor/libcamera-working.patch`; do not apply the incremental patch directly
 to upstream libcamera.
 
 ```sh
 cp -a "$REPO/packaging/libcamera/src/libcamera" "$WORK/libcamera"
-patch --batch -p1 -d "$WORK/libcamera" \
-  -i "$REPO/experiments/ov13858/libcamera.patch"
 meson setup "$WORK/build" "$WORK/libcamera" --buildtype=release \
   -Dpipelines=camss,simple,uvcvideo -Dipas=soft -Dv4l2=disabled \
   -Dgstreamer=disabled -Dcam=enabled -Dqcam=disabled -Dlc-compliance=disabled \
@@ -104,8 +105,8 @@ ffmpeg -f rawvideo -pixel_format nv12 -video_size 3840x2160 \
 
 The last IFE/IPE frames, capture metadata and timing/cleanup report remain in
 that private output directory. Review the images locally; do not add them or
-generated binary assets to this repository. Do not invoke the copied
-`preparation/prepare.py`: that full-bank entry point still describes IMX681.
+generated binary assets to this repository. For an adaptive bank, run the main `preparation/prepare.py` with
+`--sensor ov13858` and the same owner-supplied inputs in a separate output directory.
 
 ## Measured acceptance
 
@@ -134,18 +135,42 @@ Later real-scene captures, IPE replay and live repeat tests did not reproduce
 that timeout. Do not treat these short trials as long-duration reliability or
 suspend/resume qualification.
 
+## Adaptive capture
+
+Rear RAW sampling maps the 4K output crop back to native GRBG at step 16,
+with 32,400 full-frame and 8,160 centre samples per channel. Independent decoding
+of retained RAW files reproduces both histograms exactly. RAW and NV12 share
+hardware sequence numbers. Five optical exposure transitions establish a
+two-frame sensor-control delay; the immediately following frame is withheld
+when sensor controls change.
+
+Rear DMA cache synchronization and RAW statistics run on a dedicated worker.
+An eventfd returns completed statistics to the libcamera thread; buffers are
+requeued there, and shutdown joins the worker before stopping/unmapping buffers.
+The existing quarter-frame SOF deadline is retained. Histogram logging is batched.
+
+A manual-to-auto trial completed 300 IFE-to-IPE frames in 11.01 s (27.25 fps),
+with no late SOFs, no invalid statistics, and no cleanup errors. Exposure changed
+from 5 ms/1x to 33.3 ms/2.07x; white balance changed from [1.80,1.30] to
+[1.63,1.46]. This demonstrates response in one steady lit scene, not a full
+lighting or colour-quality qualification. The experimental 625-entry rear bank
+is generated locally and is not distributed.
+
 ## Remaining integration
 
-1. Establish rear frame-start metadata and frame/control association. Current
-   metadata describes requested controls; it does not prove which sensor frame
-   applied them.
-2. Add rear-aware RAW statistics and qualify automatic exposure/white balance,
-   black level, lens shading and image quality over lighting changes. The current
-   white balance and IPE CCT/lux-index selections are fixed starting points.
-3. Generalize preparation profiles without changing accepted front outputs;
-   generate and validate a rear adaptive bank.
-4. Integrate the rear path with capture leases, concurrent preparation/readback
-   and selectable PipeWire publication. The existing desktop Back Camera node
-   still uses the old system path, not this experiment.
-5. Package and boot-test the CSID change, then test front/rear switching,
-   repeated start/stop, application use and idle/streaming suspend/resume.
+The rear profile and separate socket/publisher units are experimental. Front and
+rear share the exclusive ICP session lock and cannot stream simultaneously.
+The rear profile temporarily applies the native GRBG lab override and restores
+it at shutdown; the source kernel patch is not yet installed or boot-tested.
+
+Installed desktop tests passed front → rear → front, with 90 non-black
+PipeWire frames per stream. The rear worker published 218 frames at 29.49 fps
+and exited cleanly; the front workers also exited cleanly. Switching took
+7.49 seconds to rear and 6.85 seconds back to front. The final packages passed
+90 front ISP frames and 120 rear ISP frames; both retained rear RAW histograms
+match independent decoding exactly. The sleep hook stopped and restored both
+idle workers without suspending the machine.
+
+Lighting changes, colour calibration, long-duration reliability and actual
+idle/streaming suspend/resume still need qualification. No second Surface Pro 11
+has been tested.

@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--frames', type=int, default=90)
+    parser.add_argument('--raw-stats', action='store_true', help='Record rear paired RAW statistics')
     args = parser.parse_args()
     if os.geteuid() != 0 or not os.environ.get('SUDO_UID'):
         parser.error('Use ASKPASS_REASON="..." sudo -A python -I ...')
@@ -105,7 +106,13 @@ def main():
         # Keep a writer open across cam's per-frame opens, avoiding false EOF.
         fifo_fd = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
         log = (out / 'capture.log').open('w')
-        command = userenv + ['LIBCAMERA_CAMSS_OV13858_ISP=1',
+        extra_env = []
+        if args.raw_stats:
+            raw = out / 'paired-raw'
+            raw.mkdir()
+            os.chown(raw, account.pw_uid, account.pw_gid)
+            extra_env = ['LIBCAMERA_CAMSS_RAW_STATS=' + str(raw), 'LIBCAMERA_LOG_LEVELS=Camss:DEBUG']
+        command = userenv + extra_env + ['LIBCAMERA_CAMSS_OV13858_ISP=1',
                             'LIBCAMERA_CAMSS_TUNING=' + str(work / 'ife.yaml'),
                             'LD_LIBRARY_PATH=' + str(work / 'build/src/libcamera') + ':' + str(work / 'build/src/libcamera/base'),
                             str(cam), '-c', '/base/soc@0/cci@ac15000/i2c-bus@1/camera@10',

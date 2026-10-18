@@ -145,3 +145,43 @@ and system socket/sleep service, stop the new worker, and re-enable the old
 stack. Restore the original WirePlumber camera entry if booting a kernel that
 has no ISP support. The previous runtime, packages and boot entries remain
 available during this migration.
+
+## Experimental OV13858 rear ISP
+
+The rear path has been tested on this Denali OLED with the existing qualified
+lab kernel. It requires private libcamera package `0.7.2-4` and runtime `0.1-7`
+or later. It uses the kernel's temporary native-GRBG register override, restored
+when the session ends; the source CSID fix still needs a kernel build and boot
+qualification. See [the experiment](../experiments/ov13858/README.md) for input
+hashes, geometry, frame association and measured results.
+
+Generate a separate local bank with `preparation/prepare.py --sensor ov13858`,
+using the exact rear tuning file and DLL described there. Import it with
+`tools/import-board-data.py` as for the front bank, choosing a new destination.
+Do not reuse the front bank. Copy `/etc/qualcomm-isp/config.json` to
+`/etc/qualcomm-isp/rear.json`, changing `profile` to
+`/usr/share/qualcomm-isp/profiles/surface-pro-11-denali-oled-rear.json` and `assets`
+to the imported rear bank directory. Keep the installed `cam`, library and bridge
+paths. The configuration and imported data remain local.
+
+Enable `qualcomm-isp-rear-worker.socket` in the system manager and
+`qualcomm-isp-rear-publisher.service` in the user manager. Desktop applications
+then see **Built-in Rear Camera (ISP)**. The two ISP workers share an exclusive
+hardware lock: close the previous camera stream before selecting the other.
+The five-second idle grace period plus retry can make switching take roughly
+seven to twelve seconds. Simultaneous front/rear capture is not supported.
+
+To hide the duplicate software rear-camera entry, add a WirePlumber rule matching
+`node.name = "libcamera_input._base_soc_0_cci_ac15000_i2c-bus_1_camera_10"` with
+`actions = { update-props = { node.disabled = true } }`, following the existing
+front-camera rule. Restart WirePlumber after closing camera clients. This only
+hides its desktop entry; the private worker can still open the sensor.
+
+Rollback: close clients, disable the rear user publisher and system socket,
+stop the rear worker service, remove the duplicate-hiding rule and restart
+WirePlumber. Keep the local tuning assets if you intend to retry. Front capture
+has its own configuration, warm-start state and capture directory.
+
+The sleep hook now quiesces both workers and restores exactly the previously
+active units. Automated lifecycle tests cover that logic; actual rear streaming
+suspend/resume and wider lighting/colour qualification are still outstanding.

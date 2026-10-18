@@ -124,7 +124,7 @@ def main():
     properties = Gst.Structure.new_empty('props')
     for key, value in [('media.class', 'Video/Source'), ('media.role', 'Camera'),
                        ('node.name', args.node_name), ('node.description', BOARD['description']),
-                       ('node.nick', 'Front Camera (ISP)'), ('priority.session', 800),
+                       ('node.nick', BOARD.get('nickname', 'Front Camera (ISP)')), ('priority.session', 800),
                        ('node.virtual', True)]:
         properties.set_value(key, value)
     sink.set_property('stream-properties', properties)

@@ -9,9 +9,10 @@ runtime used on a Surface Pro 11.
 This is an initial developer source release. Other X1E machines need their own
 sensor, device-tree, firmware and tuning qualification.
 
-Rear OV13858 bring-up has reached a [4K IFE-to-IPE hardware proof](experiments/ov13858/README.md)
-with fixed controls. Its experimental source and bounded live test are separate
-from the qualified front-camera packages.
+Rear OV13858 now has [experimental 4K ISP desktop capture](experiments/ov13858/README.md)
+with RAW-driven automatic exposure and white balance. The packages include an
+optional rear profile and publisher; front/rear switching has passed on this
+machine. Rear lighting, colour and suspend/resume qualification remain open.
 
 **Firmware and IPE program/tuning data are not included.** The preparation
 workflow generates Surface board data from two locally supplied, version-checked
