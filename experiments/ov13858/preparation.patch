@@ -1,0 +1,104 @@
+--- a/preparation/inputs.py
++++ b/preparation/inputs.py
+@@ -13,7 +13,7 @@
+ from chromatix import Chromatix
+ 
+ DLL_SHA256 = 'c241b7fbb2ec54e439752a1ea7ad25da10ca740012a54bd0e7a87ea94a141c35'
+-TUNING_SHA256 = '2c1c7fd9090e0bf338f44bd9de785509c1fbebc975facc5286f12865cf675f1d'
++TUNING_SHA256 = '4858ccb297eeecbc8e9b6d673f7ab4b0ead559adf16e3fe717eea9e40ccef635'
+ REFERENCE_GAINS = [1.884930453, 1.903106151]
+ 
+ 
+@@ -84,7 +84,7 @@
+ 
+ 
+ def prepare(tuning, destination):
+-    require_identity(tuning, TUNING_SHA256, 'IMX681 tuning')
++    require_identity(tuning, TUNING_SHA256, 'OV13858 MSHW0491 tuning')
+     chrom = Chromatix(tuning)
+     colour = load('parity-colour')
+     destination = Path(destination)
+@@ -92,9 +92,8 @@
+     coefficients = descriptor(chrom, 'ds4to1v11_ipe', 4, 88)[28:40]
+     data = {
+         'anr-reserve.bin': descriptor(chrom, 'anr10_ipe_v2', 4, 964)[48:964],
+-        # Preserve selector 157 used by the accepted bank. It differs from
+-        # selector 4 at the trailing descriptor word; do not silently substitute.
+-        'tf-reserve.bin': descriptor(chrom, 'tf21_ipe_v2', 157, 396)[68:396],
++        # OV13858 MSHW0491 uses the base IPE selector, not the front bank's 157.
++        'tf-reserve.bin': descriptor(chrom, 'tf21_ipe_v2', 4, 396)[68:396],
+         'ltm-reserve.bin': descriptor(chrom, 'ltm16_ipe_v2', 4, 776)[40:760],
+         'ds4-coefficients.bin': coefficients,
+         'iq-full.bin': initial_iq(coefficients),
+@@ -102,7 +101,7 @@
+         'cfg.bin': config(3840, 2176),
+         'seed-cfg.bin': config(3840, 2176, seed=True),
+     }
+-    dsx = colour.get_module(chrom, 'dsx10', 2)
++    dsx = colour.get_module(chrom, 'dsx10', 1)
+     regions = [chrom.data(p[1], p[2]) for p in dsx if p[0] == 'region' and p[2]]
+     if len(regions) != 1 or len(regions[0]) != 2824:
+         raise ValueError('Unexpected base IPE DSX region')
+--- a/preparation/tone-regions.py
++++ b/preparation/tone-regions.py
+@@ -23,8 +23,8 @@
+     region_ids = [p[3] for p in parts if p[0] == 'region' and p[2]]
+ 
+     def read(p, depth):
+-        expected = (2, 1, leaves)[depth]
+-        if p[2] != expected * 24:
++        expected = p[2] // 24
++        if not 1 <= expected <= 16 or p[2] != expected * 24:
+             raise ValueError('Unexpected tone trigger count')
+         result = []
+         previous = -math.inf
+@@ -41,7 +41,7 @@
+                     raise ValueError('Invalid tone leaf reference')
+                 node.update(region=region_ids.index(region_id + 1), data=chrom.data(region[1], region[2]))
+             else:
+-                if count != (1, leaves)[depth] or has_region or region[2] or child[0] != 'trigger':
++                if not 1 <= count <= 16 or child[2] != count * 24 or has_region or region[2] or child[0] != 'trigger':
+                     raise ValueError('Invalid tone child reference')
+                 node['children'] = read(child, depth + 1)
+             result.append(node)
+--- a/preparation/build-entry.py
++++ b/preparation/build-entry.py
+@@ -26,7 +26,7 @@
+         selector, data_off, size = struct.unpack_from('<III', c.f, off + 40)
+         if name == b'tmc14_sw_v2' and selector == 5:
+             descriptors.append(c.data(data_off, size))
+-    if len(regions) != 6 or len(descriptors) != 1 or len(descriptors[0]) != 84:
++    if len(regions) != 1 or len(descriptors) != 1 or len(descriptors[0]) != 84:
+         raise ValueError('Unexpected base TMC141 tuning layout')
+     return regions[0], descriptors[0]
+ 
+@@ -130,7 +130,7 @@
+         raise ValueError('Unexpected IFE gamma selection layout')
+     gamma_module = colour.get_module(c, 'gamma15', 2)
+     selected_gamma = colour.blend(colour.regions(c, gamma_module),
+-                                  colour.choose(colour.triggers(c, gamma_module, 2), args.lux_index))
++                                  colour.choose(colour.triggers(c, gamma_module, 3), args.lux_index))
+     gamma_contract = gamma_chain.verify(args.ife, list(ife_curves[0]),
+                                        (out / 'iq-ltm.bin').read_bytes(), (out / 'gamma.bin').read_bytes(),
+                                        colour.gamma_lut(selected_gamma),
+--- a/preparation/parity-colour.py
++++ b/preparation/parity-colour.py
+@@ -126,12 +126,14 @@
+     c = Chromatix(a.chromatix)
+     ccmod, gammod, cvmod = [get_module(c, n, k) for n, k in [('cc13', 2), ('gamma15', 2), ('cv12', 0)]]
+     ccsel = choose(triggers(c, ccmod, 4), a.cct)
+-    gsel = choose(triggers(c, gammod, 2), a.lux_index)
+-    cvsel = choose(triggers(c, cvmod, 3), a.lux_index)
+-    matrix = blend(regions(c, ccmod), ccsel)
++    gsel = choose(triggers(c, gammod, 3), a.lux_index)
++    cvsel = choose(triggers(c, cvmod, 2), a.lux_index)
++    ccs = regions(c, ccmod)
++    ccgain = choose(triggers(c, ccmod, 2), a.lux_index)
++    matrix = blend([blend(ccs[i * 4:(i + 1) * 4], ccsel) for i in range(2)], ccgain)
+     gamma = blend(regions(c, gammod), gsel)
+     cvs = regions(c, cvmod)
+-    cv = blend([blend(cvs[i * 4:(i + 1) * 4], ccsel) for i in range(3)], cvsel)
++    cv = blend([blend(cvs[i * 4:(i + 1) * 4], ccsel) for i in range(2)], cvsel)
+     pre, cstmatrix = cst(c)
+     iq = bytearray(a.iq.read_bytes())
+     if len(iq) != 0x1834:

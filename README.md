@@ -9,6 +9,10 @@ runtime used on a Surface Pro 11.
 This is an initial developer source release. Other X1E machines need their own
 sensor, device-tree, firmware and tuning qualification.
 
+Rear OV13858 bring-up has reached a [4K IFE-to-IPE hardware proof](experiments/ov13858/README.md)
+with fixed controls. Its experimental source and bounded live test are separate
+from the qualified front-camera packages.
+
 **Firmware and IPE program/tuning data are not included.** The preparation
 workflow generates Surface board data from two locally supplied, version-checked
 Windows driver files. Installing ICP firmware alone is insufficient. Other X1E
@@ -83,10 +87,14 @@ unchanged; see the [preparation guide](docs/PREPARE-BOARD-DATA.md).
 
 ## Next integration work
 
-1. Reproduce and test the preparation workflow on another Surface.
-2. Collect inventory/RAW results from a second X1E model and add its profile.
-3. Reduce the kernel changes to the necessary generic and per-board series for
+1. Complete rear OV13858 controls, adaptive preparation and desktop integration
+   from the working 4K IFE-to-IPE experiment.
+2. Reduce the kernel changes to the necessary generic and per-board series for
    integration into the current Omarchy ARM kernel.
+
+Independent tester work remains open: reproduce preparation on another Surface
+and collect inventory/RAW results from another X1E model. Local development does
+not depend on those reports arriving.
 
 Original standalone code is MIT. Kernel, libcamera and PipeWire retain their
 respective licenses and notices; see [LICENSE](LICENSE). This repository does

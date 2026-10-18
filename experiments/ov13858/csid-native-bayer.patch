@@ -1,0 +1,65 @@
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-680.c b/drivers/media/platform/qcom/camss/camss-csid-680.c
+index 052236cc8956..79c1412835d5 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-680.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-680.c
+@@ -201,6 +201,7 @@ static inline void csid_wrapper_write(struct csid_device *csid, u32 reg,
+ #define		IPP_CROP(start, end)				(((end) << 16) | (start))
+ #define		IPP_ERR_RECOVERY_OVERFLOW_CTRL			(BIT(0) | BIT(3))
+ #define CSID_IPP_CAMIF_FRAME_CFG				0x330
++#define		IPP_CAMIF_FRAME_CFG_PIXEL_PATTERN(v)		((v) << 24)
+ #define CSID_IPP_DEBUG_CAMIF_1					0x340
+ #define CSID_IPP_DEBUG_CAMIF_0					0x344
+ #define CSID_IPP_DEBUG_HALT_STATUS				0x348
+@@ -403,7 +404,8 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8
+  * even height, and the source pad carries the RGGB code at the cropped
+  * size. A column crop would convert GRBG and BGGR, but the CSID crops
+  * before unpacking and a window starting on an odd pixel scrambles the
+- * RAW10 groups, so those orders are left as they are.
++ * RAW10 groups. GRBG and BGGR instead use the native CAMIF pixel pattern.
++ * Keep the previously validated GBRG row crop for compatibility.
+  */
+ struct csid_bayer_crop {
+ 	u32 code;
+@@ -412,6 +414,32 @@ struct csid_bayer_crop {
+ 	u8 lines;
+ };
+ 
++/* Pixel pattern forwarded from CSID to IFE; measured with RAW10 colour bars.
++ * Use the source format, which already accounts for the legacy GBRG row crop.
++ */
++static u32 csid_ipp_pixel_pattern(u32 code)
++{
++	switch (code) {
++	case MEDIA_BUS_FMT_SGBRG8_1X8:
++	case MEDIA_BUS_FMT_SGBRG10_1X10:
++	case MEDIA_BUS_FMT_SGBRG12_1X12:
++	case MEDIA_BUS_FMT_SGBRG14_1X14:
++		return 1;
++	case MEDIA_BUS_FMT_SBGGR8_1X8:
++	case MEDIA_BUS_FMT_SBGGR10_1X10:
++	case MEDIA_BUS_FMT_SBGGR12_1X12:
++	case MEDIA_BUS_FMT_SBGGR14_1X14:
++		return 2;
++	case MEDIA_BUS_FMT_SGRBG8_1X8:
++	case MEDIA_BUS_FMT_SGRBG10_1X10:
++	case MEDIA_BUS_FMT_SGRBG12_1X12:
++	case MEDIA_BUS_FMT_SGRBG14_1X14:
++		return 3;
++	default:
++		return 0;
++	}
++}
++
+ static const struct csid_bayer_crop csid_bayer_crops[] = {
+ 	{ MEDIA_BUS_FMT_SGBRG8_1X8, MEDIA_BUS_FMT_SRGGB8_1X8, 0, 1 },
+ 	{ MEDIA_BUS_FMT_SGBRG10_1X10, MEDIA_BUS_FMT_SRGGB10_1X10, 0, 1 },
+@@ -488,6 +516,9 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable, u8
+ 	val |= vc << RDI_CFG0_VIRTUAL_CHANNEL;
+ 	val |= dt_id << RDI_CFG0_DT_ID;
+ 	csid_reg_write(csid, CSID_IPP_CFG0, val);
++	val = csid_ipp_pixel_pattern(input_format->code);
++	csid_reg_write(csid, CSID_IPP_CAMIF_FRAME_CFG,
++		       IPP_CAMIF_FRAME_CFG_PIXEL_PATTERN(val));
+ 
+ 	val = IPP_CFG1_TIMESTAMP_STB_FRAME;
+ 	val |= IPP_CFG1_TIMESTAMP_EN;

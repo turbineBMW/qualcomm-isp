@@ -1,0 +1,107 @@
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.cpp
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.cpp
+@@ -58,7 +58,7 @@
+ /* Loop tuning: target luma, damping, and where to trade frame rate for gain */
+ constexpr double kTargetLuma = 120.0;
+ constexpr double kCentreWeight = 3.0;	/* weight of the central quarter of the frame */
+-constexpr int32_t kGainKnee = 768;	/* IMX681 code for 4x */
++constexpr float kGainKnee = 4.0f;
+ constexpr double kSlowFrame = 2.0;	/* allow frames up to this many default lengths in the dark */
+ constexpr unsigned int kStatsStep = 16;
+ constexpr int32_t kDefaultBlackLevel = 64;
+@@ -128,14 +128,16 @@
+ 		return nullptr;
+ 
+ 	/*
+-	 * The IFE takes its input as RGGB, and the CSID crop turns GBRG into
+-	 * it; GRBG and BGGR sensors keep the software path until the order
+-	 * can be set.
++	 * The existing GBRG path uses the validated CSID row crop. OV13858
++	 * needs the native CSID CAMIF pixel-pattern setting; keep it opt-in
++	 * until that kernel change and the rear control path are qualified.
+ 	 */
+ 	bool supported = false;
+ 	for (unsigned int code : csi->sensor()->mbusCodes()) {
+ 		const BayerFormat &bf = BayerFormat::fromMbusCode(code);
+-		if (bf.isValid() && (bf.order == BayerFormat::RGGB || bf.order == BayerFormat::GBRG))
++		if (bf.isValid() && (bf.order == BayerFormat::RGGB || bf.order == BayerFormat::GBRG ||
++		    (bf.order == BayerFormat::GRBG && csi->sensor()->model() == "ov13858" &&
++		     std::getenv("LIBCAMERA_CAMSS_OV13858_ISP"))))
+ 			supported = true;
+ 	}
+ 	if (!supported) {
+@@ -156,16 +158,20 @@
+ }
+ 
+ /*
+- * The IMX681 gain code to a multiplier and back; the sensor's unity code is
+- * zero and the response is 1024 / (1024 - code).
++ * IMX681 uses 1024 / (1024 - code), with unity at zero. OV13858 uses
++ * a linear code with unity at 128. Keep exposure calculations in gains.
+  */
+-static float gainFromCode(int32_t code)
+-{
++float CamssIspInline::gainFromCode(int32_t code) const
++{
++	if (sensor_->model() == "ov13858")
++		return std::max(code, 128) / 128.0f;
+ 	return 1024.0f / (1024.0f - std::clamp<int32_t>(code, 0, 1023));
+ }
+ 
+-static int32_t gainToCode(float gain)
+-{
++int32_t CamssIspInline::gainToCode(float gain) const
++{
++	if (sensor_->model() == "ov13858")
++		return std::clamp<int32_t>(std::lround(gain * 128.0f), 128, 8191);
+ 	if (gain <= 1.0f)
+ 		return 0;
+ 	return std::clamp<int32_t>(std::lround(1024.0f - 1024.0f / gain), 0, 1023);
+@@ -260,7 +266,7 @@
+ 	spatialActive_ = true;
+ 	centreWeight_ = kCentreWeight;
+ 	slowFrame_ = kSlowFrame;
+-	gainKnee_ = kGainKnee;
++	gainKnee_ = gainToCode(kGainKnee);
+ 	highlightPeak_ = 0.80;
+ 	peripheralClipping_ = 0.01;
+ 	centreClipping_ = 0.001;
+@@ -346,7 +352,7 @@
+ 	centreWeight_ = ae["centre_weight"].get<double>().value_or(kCentreWeight);
+ 	slowFrame_ = std::max(ae["slow_frame"].get<double>().value_or(kSlowFrame), 1.0);
+ 	/* Analogue gain reached at one frame length before the frame grows. */
+-	double kneeGain = std::clamp(ae["slow_frame_gain"].get<double>().value_or(gainFromCode(kGainKnee)), 1.0, 16.0);
++	double kneeGain = std::clamp(ae["slow_frame_gain"].get<double>().value_or(kGainKnee), 1.0, 16.0);
+ 	gainKnee_ = std::min<int32_t>(gainToCode(kneeGain), gainMax_);
+ 	sensorDigitalMax_ = std::clamp(ae["sensor_digital_max"].get<double>().value_or(1.0), 1.0, 15.0);
+ 	if (ae.contains("raw_highlights")) {
+@@ -888,7 +894,8 @@
+ 	ControlList vblank(sensor->controls());
+ 	vblank.set(V4L2_CID_VBLANK, exposure_.vblank);
+ 	if (hasSensorDigital_)
+-		vblank.set(V4L2_CID_DIGITAL_GAIN, exposure_.sensorDigital);
++		vblank.set(V4L2_CID_DIGITAL_GAIN, exposure_.sensorDigital *
++			   (sensor_->model() == "ov13858" ? 4 : 1));
+ 	int ret = sensor->setControls(&vblank);
+ 	if (ret)
+ 		return ret;
+@@ -1210,7 +1217,7 @@
+ 		total = std::min(total, exposureSlow * gainTop);
+ 	Exposure e;
+ 	if (total <= exposureMax_) {
+-		e = { std::max<int32_t>(100, (int32_t)total), 0, vblankDef_, kWbUnity };
++		e = { std::max<int32_t>(100, (int32_t)total), gainToCode(1.0f), vblankDef_, kWbUnity };
+ 	} else if (total <= exposureMax_ * knee) {
+ 		e = { exposureMax_, gainToCode(total / exposureMax_), vblankDef_, kWbUnity };
+ 	} else if (total <= exposureSlow * knee) {
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.h
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.h
+@@ -98,6 +98,8 @@
+ 	void updateLineDuration();
+ 	int32_t manualExposureMax() const;
+ 	int32_t digitalMax() const;
++	float gainFromCode(int32_t code) const;
++	int32_t gainToCode(float gain) const;
+ 	int applySensor();
+ 	int applyIsp();
+ 	void applyTables();
