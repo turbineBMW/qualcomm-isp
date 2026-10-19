@@ -35,10 +35,14 @@ if dt.exists():
                       'firmware': strings(p.parent / 'firmware-name')})
 
 devices = {}
-for group in ('media', 'video4linux'):
+# Media devices sit on the media bus; there is no /sys/class/media.
+for group, sysfs in (('media', '/sys/bus/media/devices'), ('video4linux', '/sys/class/video4linux')):
     devices[group] = []
-    for p in sorted((Path('/sys/class') / group).glob('*')):
+    for p in sorted(Path(sysfs).glob('*')):
+        # A media device has no device link; its parent is the device.
         driver = p / 'device/driver'
+        if not driver.exists():
+            driver = p.resolve().parent / 'driver'
         devices[group].append({'device': '/dev/' + p.name,
                                'name': text(p / 'name') or text(p / 'model'),
                                'driver': driver.resolve().name if driver.exists() else None})
