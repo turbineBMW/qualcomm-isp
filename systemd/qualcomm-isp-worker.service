@@ -1,6 +1,6 @@
 [Unit]
 ConditionPathExists=/etc/qualcomm-isp/config.json
-ConditionPathExists=/usr/share/doc/linux-omarchy-isp/build-artifacts.json
+ConditionPathExists=/usr/lib/modules/%v/qualcomm-isp-manifest.json
 Description=Qualcomm ISP camera worker (privileged session on demand)
 Requires=qualcomm-isp-worker.socket
 After=qualcomm-isp-worker.socket

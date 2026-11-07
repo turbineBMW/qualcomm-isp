@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Brandon Williams <turbine.bmw@gmail.com>
 # SPDX-License-Identifier: MIT
-"""Worker daemon protocol with a stubbed session: start/busy/status/stop/EOF."""
+"""Worker daemon protocol with a stubbed session: start/busy/status/stop/EOF; stop escalation."""
 import array, importlib.util, json, os, socket, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -110,6 +110,98 @@ class WorkerdTests(unittest.TestCase):
             self.assertEqual(result[0][0]['type'], 'failed')
             self.assertIsNotNone(FakeSession.instances[-1].stopped)
             result[0][1].close(); c.close()
+
+
+# A stand-in session tree: root -> same-group child, root -> camera-like child in its own session.
+TREE = r"""
+import os, signal, subprocess, sys, time
+out, mode = sys.argv[1], sys.argv[2]
+sleeper = [sys.executable, '-I', '-c', 'import time; time.sleep(60)']
+group = subprocess.Popen(sleeper)
+camera = subprocess.Popen(sleeper, start_new_session=True)
+def term(*_):
+    time.sleep(.2)
+    alive = group.poll() is None
+    camera.kill(); group.kill()
+    open(out + '.term', 'w').write('group-child-alive' if alive else 'group-child-dead')
+    os._exit(0)
+signal.signal(signal.SIGTERM, signal.SIG_IGN if mode == 'stubborn' else term)
+open(out, 'w').write(f'{group.pid} {camera.pid}')
+time.sleep(60)
+"""
+
+
+def gone(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    # A killed child of the test runner may linger as a zombie until reaped.
+    return Path(f'/proc/{pid}/stat').read_text().split(')')[-1].split()[0] == 'Z'
+
+
+class StopPathTests(unittest.TestCase):
+    def session(self, mode):
+        self.temp = tempfile.TemporaryDirectory(); out = Path(self.temp.name) / 'pids'
+        s = d.Session.__new__(d.Session)
+        s.dir = Path(self.temp.name) / 'session'; s.log = open(Path(self.temp.name) / 'log', 'w')
+        s.process = d.subprocess.Popen([sys.executable, '-I', '-c', TREE, str(out), mode], start_new_session=True)
+        for _ in range(100):
+            if out.exists() and out.read_text(): break
+            time.sleep(.05)
+        return s, out, [int(x) for x in out.read_text().split()]
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_stop_signals_only_the_session_supervisor(self):
+        s, out, (group, camera) = self.session('polite')
+        with patch.object(d.Session, 'recover') as recover:
+            self.assertEqual(s.stop(timeout=10), 0)
+        # The supervisor still had its group child: cleanup was not raced by a group signal.
+        self.assertEqual(Path(str(out) + '.term').read_text(), 'group-child-alive')
+        recover.assert_not_called()
+
+    def test_stubborn_session_tree_is_killed_and_icp_recovered(self):
+        s, out, (group, camera) = self.session('stubborn')
+        with patch.object(d.Session, 'recover') as recover, patch.object(d, 'log'):
+            self.assertEqual(s.stop(timeout=1), -9)
+        for _ in range(40):
+            if gone(group) and gone(camera): break
+            time.sleep(.05)
+        self.assertTrue(gone(group) and gone(camera), 'a descendant outside the process group survived')
+        recover.assert_called_once()
+
+    def test_recover_unloads_a_leftover_icp_module(self):
+        self.temp = tempfile.TemporaryDirectory(); icp = Path(self.temp.name) / 'qcom_camss_icp'
+        s = d.Session.__new__(d.Session)
+        with patch.object(d.subprocess, 'run') as run, patch.object(d, 'log'):
+            run.return_value = d.subprocess.CompletedProcess([], 0, '', '')
+            s.recover(icp)
+            run.assert_not_called()
+            icp.mkdir(); s.recover(icp)
+            self.assertEqual(run.call_args[0][0], ['rmmod', 'qcom_camss_icp'])
+
+
+class ProcTreeTests(unittest.TestCase):
+    def test_descendants_cross_sessions(self):
+        sleeper = [sys.executable, '-I', '-c', 'import time; time.sleep(30)']
+        script = ('import subprocess, sys, time; c = subprocess.Popen(%r, start_new_session=True); '
+                  'print(c.pid, flush=True); time.sleep(30)' % (sleeper,))
+        root = d.subprocess.Popen([sys.executable, '-I', '-c', script], stdout=d.subprocess.PIPE, text=True)
+        try:
+            camera = int(root.stdout.readline())
+            self.assertIn(camera, d.proctree.descendants(root.pid))
+            d.proctree.kill_tree(root.pid)
+            root.wait(5)
+            for _ in range(40):
+                if gone(camera): break
+                time.sleep(.05)
+            self.assertTrue(gone(camera))
+        finally:
+            if root.poll() is None:
+                root.kill()
+            root.stdout.close()
 
 
 if __name__ == '__main__':

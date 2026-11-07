@@ -11,6 +11,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / 'runtime'))
 import pd10
 from chromatix import Chromatix
+from sensor_layout import LAYOUTS
 
 DLL_SHA256 = 'c241b7fbb2ec54e439752a1ea7ad25da10ca740012a54bd0e7a87ea94a141c35'
 TUNING_SHA256 = '2c1c7fd9090e0bf338f44bd9de785509c1fbebc975facc5286f12865cf675f1d'
@@ -83,8 +84,9 @@ def initial_iq(coefficients, seed=False):
     return bytes(result)
 
 
-def prepare(tuning, destination):
-    require_identity(tuning, TUNING_SHA256, 'IMX681 tuning')
+def prepare(tuning, destination, sensor='imx681'):
+    layout = LAYOUTS[sensor]
+    require_identity(tuning, layout['sha256'], sensor + ' tuning')
     chrom = Chromatix(tuning)
     colour = load('parity-colour')
     destination = Path(destination)
@@ -94,7 +96,7 @@ def prepare(tuning, destination):
         'anr-reserve.bin': descriptor(chrom, 'anr10_ipe_v2', 4, 964)[48:964],
         # Preserve selector 157 used by the accepted bank. It differs from
         # selector 4 at the trailing descriptor word; do not silently substitute.
-        'tf-reserve.bin': descriptor(chrom, 'tf21_ipe_v2', 157, 396)[68:396],
+        'tf-reserve.bin': descriptor(chrom, 'tf21_ipe_v2', layout['tf_selector'], 396)[68:396],
         'ltm-reserve.bin': descriptor(chrom, 'ltm16_ipe_v2', 4, 776)[40:760],
         'ds4-coefficients.bin': coefficients,
         'iq-full.bin': initial_iq(coefficients),
@@ -102,7 +104,7 @@ def prepare(tuning, destination):
         'cfg.bin': config(3840, 2176),
         'seed-cfg.bin': config(3840, 2176, seed=True),
     }
-    dsx = colour.get_module(chrom, 'dsx10', 2)
+    dsx = colour.get_module(chrom, 'dsx10', layout['dsx_occurrence'])
     regions = [chrom.data(p[1], p[2]) for p in dsx if p[0] == 'region' and p[2]]
     if len(regions) != 1 or len(regions[0]) != 2824:
         raise ValueError('Unexpected base IPE DSX region')
@@ -112,8 +114,18 @@ def prepare(tuning, destination):
     return {name: hashlib.sha256(blob).hexdigest() for name, blob in data.items()}
 
 
-def ife_profile(tuning):
+def reference_gains(tuning, sensor='imx681'):
+    require_identity(tuning, LAYOUTS[sensor]['sha256'], sensor + ' tuning')
+    if sensor == 'imx681':
+        return REFERENCE_GAINS
+    report, _, _ = load('awb-reference').extract(tuning)
+    point = next(r for r in report['references'] if r['nominal_cct'] == 5000)
+    return [1 / point['rg'], 1 / point['bg']]
+
+
+def ife_profile(tuning, sensor='imx681'):
     """The accepted active settings, with a locally extracted gamma curve."""
+    gains = reference_gains(tuning, sensor)
     colour = load('parity-colour')
     chrom = Chromatix(tuning)
     curves = colour.regions(chrom, colour.get_module(chrom, 'gamma15', 1))
@@ -133,8 +145,8 @@ def ife_profile(tuning):
         'ae': {'target': 110, 'centre_weight': 3, 'slow_frame': 2.0,
                'sensor_digital_max': 1.0, 'raw_highlights': True},
         'zoom': 1.0,
-        'awb': {'raw_reference_gains': REFERENCE_GAINS, 'blue_bias': 0.94,
-                'warmth': 0.4, 'neutral_ratio': 1.0},
+        'awb': {'raw_reference_gains': gains, 'blue_bias': 0.94 if sensor == 'imx681' else 1.0,
+                'warmth': 0.4 if sensor == 'imx681' else 0.0, 'neutral_ratio': 1.0},
         'gamma_lut': gamma,
         'denoise': {'enable': False, 'temporal': 0.35, 'threshold': 2.0,
                     'ramp': 1.5, 'chroma_radius': 0},

@@ -1,17 +1,21 @@
 # Install the experimental runtime
 
 This is currently a Surface Pro 11 Denali OLED profile on the verified
-`7.2.8-13.1-omarchy-isp+` kernel. Other X1E machines first need their own sensor,
+`7.3.0-25.1-omarchy-isp` kernel. Other X1E machines first need their own sensor,
 firmware and DT qualification. Changing the profile does not make the Surface
 IPE program bank correct for another sensor.
 
 ## Kernel
 
 `packaging/kernel` contains the co-installable `linux-omarchy-isp` recipe based
-on Omarchy ARM 7.2.8-13. Build with `makepkg` on aarch64 after installing its
-build dependencies and importing the recipe's public verification keys into
-your build user's keyring. The recipe preserves upstream source signatures.
-The adjacent README and upgrade notes originate in the pinned Omarchy recipe.
+on the Surface Pro 11 `linux-omarchy` 7.3-25.1 recipe (Omarchy ARM 7.3-25).
+Build with `makepkg` on aarch64 after installing its build dependencies and
+importing the recipe's public verification keys into your build user's
+keyring. The recipe preserves upstream source signatures. The adjacent README
+and upgrade notes originate in the pinned base recipe. The package writes the
+build manifest the runtime's preflight checks
+(`/usr/lib/modules/<release>/qualcomm-isp-manifest.json`); the runtime's units
+start only on a kernel that has one.
 
 Installing a kernel package is not a complete board boot setup. The tested
 Surface boot entry uses the Denali OLED DTB and `iommu.passthrough=0`, with the
@@ -145,3 +149,43 @@ and system socket/sleep service, stop the new worker, and re-enable the old
 stack. Restore the original WirePlumber camera entry if booting a kernel that
 has no ISP support. The previous runtime, packages and boot entries remain
 available during this migration.
+
+## Experimental OV13858 rear ISP
+
+The rear path has been tested on this Denali OLED with the existing qualified
+lab kernel. It requires private libcamera package `0.7.2-4` and runtime `0.1-7`
+or later. It uses the kernel's temporary native-GRBG register override, restored
+when the session ends; the source CSID fix still needs a kernel build and boot
+qualification. See [the experiment](../experiments/ov13858/README.md) for input
+hashes, geometry, frame association and measured results.
+
+Generate a separate local bank with `preparation/prepare.py --sensor ov13858`,
+using the exact rear tuning file and DLL described there. Import it with
+`tools/import-board-data.py` as for the front bank, choosing a new destination.
+Do not reuse the front bank. Copy `/etc/qualcomm-isp/config.json` to
+`/etc/qualcomm-isp/rear.json`, changing `profile` to
+`/usr/share/qualcomm-isp/profiles/surface-pro-11-denali-oled-rear.json` and `assets`
+to the imported rear bank directory. Keep the installed `cam`, library and bridge
+paths. The configuration and imported data remain local.
+
+Enable `qualcomm-isp-rear-worker.socket` in the system manager and
+`qualcomm-isp-rear-publisher.service` in the user manager. Desktop applications
+then see **Built-in Rear Camera (ISP)**. The two ISP workers share an exclusive
+hardware lock: close the previous camera stream before selecting the other.
+The five-second idle grace period plus retry can make switching take roughly
+seven to twelve seconds. Simultaneous front/rear capture is not supported.
+
+To hide the duplicate software rear-camera entry, add a WirePlumber rule matching
+`node.name = "libcamera_input._base_soc_0_cci_ac15000_i2c-bus_1_camera_10"` with
+`actions = { update-props = { node.disabled = true } }`, following the existing
+front-camera rule. Restart WirePlumber after closing camera clients. This only
+hides its desktop entry; the private worker can still open the sensor.
+
+Rollback: close clients, disable the rear user publisher and system socket,
+stop the rear worker service, remove the duplicate-hiding rule and restart
+WirePlumber. Keep the local tuning assets if you intend to retry. Front capture
+has its own configuration, warm-start state and capture directory.
+
+The sleep hook now quiesces both workers and restores exactly the previously
+active units. Automated lifecycle tests cover that logic; actual rear streaming
+suspend/resume and wider lighting/colour qualification are still outstanding.

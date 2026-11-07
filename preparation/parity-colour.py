@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE))
 from chromatix import Chromatix
+from sensor_layout import identify
 from ipeprog import regcont, cc_matrix
 
 
@@ -124,14 +125,18 @@ def main():
     p.add_argument('--asf-program', type=Path)
     a = p.parse_args()
     c = Chromatix(a.chromatix)
+    layout = identify(c.f)[1]
     ccmod, gammod, cvmod = [get_module(c, n, k) for n, k in [('cc13', 2), ('gamma15', 2), ('cv12', 0)]]
     ccsel = choose(triggers(c, ccmod, 4), a.cct)
-    gsel = choose(triggers(c, gammod, 2), a.lux_index)
-    cvsel = choose(triggers(c, cvmod, 3), a.lux_index)
-    matrix = blend(regions(c, ccmod), ccsel)
+    gsel = choose(triggers(c, gammod, layout['gamma_rows']), a.lux_index)
+    cvsel = choose(triggers(c, cvmod, layout['cv_rows']), a.lux_index)
+    matrices = regions(c, ccmod)
+    matrix = blend(matrices, ccsel) if layout['cc_rows'] == 1 else blend(
+        [blend(matrices[i * 4:(i + 1) * 4], ccsel) for i in range(layout['cc_rows'])],
+        choose(triggers(c, ccmod, layout['cc_rows']), a.lux_index))
     gamma = blend(regions(c, gammod), gsel)
     cvs = regions(c, cvmod)
-    cv = blend([blend(cvs[i * 4:(i + 1) * 4], ccsel) for i in range(3)], cvsel)
+    cv = blend([blend(cvs[i * 4:(i + 1) * 4], ccsel) for i in range(layout['cv_rows'])], cvsel)
     pre, cstmatrix = cst(c)
     iq = bytearray(a.iq.read_bytes())
     if len(iq) != 0x1834:

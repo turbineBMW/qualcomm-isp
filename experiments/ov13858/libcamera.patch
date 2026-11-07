@@ -1,0 +1,599 @@
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.cpp
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.cpp
+@@ -58,7 +58,7 @@
+ /* Loop tuning: target luma, damping, and where to trade frame rate for gain */
+ constexpr double kTargetLuma = 120.0;
+ constexpr double kCentreWeight = 3.0;	/* weight of the central quarter of the frame */
+-constexpr int32_t kGainKnee = 768;	/* IMX681 code for 4x */
++constexpr float kGainKnee = 4.0f;
+ constexpr double kSlowFrame = 2.0;	/* allow frames up to this many default lengths in the dark */
+ constexpr unsigned int kStatsStep = 16;
+ constexpr int32_t kDefaultBlackLevel = 64;
+@@ -128,14 +128,16 @@
+ 		return nullptr;
+ 
+ 	/*
+-	 * The IFE takes its input as RGGB, and the CSID crop turns GBRG into
+-	 * it; GRBG and BGGR sensors keep the software path until the order
+-	 * can be set.
++	 * The existing GBRG path uses the validated CSID row crop. OV13858
++	 * needs the native CSID CAMIF pixel-pattern setting; keep it opt-in
++	 * until that kernel change and the rear control path are qualified.
+ 	 */
+ 	bool supported = false;
+ 	for (unsigned int code : csi->sensor()->mbusCodes()) {
+ 		const BayerFormat &bf = BayerFormat::fromMbusCode(code);
+-		if (bf.isValid() && (bf.order == BayerFormat::RGGB || bf.order == BayerFormat::GBRG))
++		if (bf.isValid() && (bf.order == BayerFormat::RGGB || bf.order == BayerFormat::GBRG ||
++		    (bf.order == BayerFormat::GRBG && csi->sensor()->model() == "ov13858" &&
++		     std::getenv("LIBCAMERA_CAMSS_OV13858_ISP"))))
+ 			supported = true;
+ 	}
+ 	if (!supported) {
+@@ -156,16 +158,20 @@
+ }
+ 
+ /*
+- * The IMX681 gain code to a multiplier and back; the sensor's unity code is
+- * zero and the response is 1024 / (1024 - code).
++ * IMX681 uses 1024 / (1024 - code), with unity at zero. OV13858 uses
++ * a linear code with unity at 128. Keep exposure calculations in gains.
+  */
+-static float gainFromCode(int32_t code)
+-{
++float CamssIspInline::gainFromCode(int32_t code) const
++{
++	if (sensor_->model() == "ov13858")
++		return std::max(code, 128) / 128.0f;
+ 	return 1024.0f / (1024.0f - std::clamp<int32_t>(code, 0, 1023));
+ }
+ 
+-static int32_t gainToCode(float gain)
+-{
++int32_t CamssIspInline::gainToCode(float gain) const
++{
++	if (sensor_->model() == "ov13858")
++		return std::clamp<int32_t>(std::lround(gain * 128.0f), 128, 8191);
+ 	if (gain <= 1.0f)
+ 		return 0;
+ 	return std::clamp<int32_t>(std::lround(1024.0f - 1024.0f / gain), 0, 1023);
+@@ -260,7 +266,7 @@
+ 	spatialActive_ = true;
+ 	centreWeight_ = kCentreWeight;
+ 	slowFrame_ = kSlowFrame;
+-	gainKnee_ = kGainKnee;
++	gainKnee_ = gainToCode(kGainKnee);
+ 	highlightPeak_ = 0.80;
+ 	peripheralClipping_ = 0.01;
+ 	centreClipping_ = 0.001;
+@@ -274,9 +280,9 @@
+ 	loadTuning();
+ 
+ 	const char *stats = std::getenv("LIBCAMERA_CAMSS_RAW_STATS");
+-	if (stats && *stats && sensor_->model() == "imx681") {
++	if (stats && *stats && (sensor_->model() == "imx681" || sensor_->model() == "ov13858")) {
+ 		csi_->setStatsCapture(true);
+-		rawStats_ = std::make_unique<CamssRawStats>(csi_->rawOutput(), stats);
++		rawStats_ = std::make_unique<CamssRawStats>(csi_->rawOutput(), stats, sensor_->model() == "ov13858");
+ 		if (highlightAeEnabled_)
+ 			rawStats_->histogramReady.connect(this, &CamssIspInline::histogramReady);
+ 		if (bayerAwbEnabled_) {
+@@ -346,7 +352,7 @@
+ 	centreWeight_ = ae["centre_weight"].get<double>().value_or(kCentreWeight);
+ 	slowFrame_ = std::max(ae["slow_frame"].get<double>().value_or(kSlowFrame), 1.0);
+ 	/* Analogue gain reached at one frame length before the frame grows. */
+-	double kneeGain = std::clamp(ae["slow_frame_gain"].get<double>().value_or(gainFromCode(kGainKnee)), 1.0, 16.0);
++	double kneeGain = std::clamp(ae["slow_frame_gain"].get<double>().value_or(kGainKnee), 1.0, 16.0);
+ 	gainKnee_ = std::min<int32_t>(gainToCode(kneeGain), gainMax_);
+ 	sensorDigitalMax_ = std::clamp(ae["sensor_digital_max"].get<double>().value_or(1.0), 1.0, 15.0);
+ 	if (ae.contains("raw_highlights")) {
+@@ -580,7 +586,7 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	if (rawStats_ && (inputCfg.size != Size(3840, 2640) ||
++	if (rawStats_ && (inputCfg.size != (sensor_->model() == "ov13858" ? Size(4224, 3136) : Size(3840, 2640)) ||
+ 			  outputCfg.size != Size(3840, 2160) || zoom_ != 1.0))
+ 		return -EINVAL;
+ 
+@@ -835,7 +841,7 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	frameSyncEnabled_ = sensor_->model() == "imx681" && pix_->supportsFrameStartEvent();
++	frameSyncEnabled_ = (sensor_->model() == "imx681" || sensor_->model() == "ov13858") && pix_->supportsFrameStartEvent();
+ 	if (frameSyncEnabled_) {
+ 		ret = pix_->setFrameStartEnabled(true);
+ 		if (ret) {
+@@ -888,7 +894,8 @@
+ 	ControlList vblank(sensor->controls());
+ 	vblank.set(V4L2_CID_VBLANK, exposure_.vblank);
+ 	if (hasSensorDigital_)
+-		vblank.set(V4L2_CID_DIGITAL_GAIN, exposure_.sensorDigital);
++		vblank.set(V4L2_CID_DIGITAL_GAIN, exposure_.sensorDigital *
++			   (sensor_->model() == "ov13858" ? 4 : 1));
+ 	int ret = sensor->setControls(&vblank);
+ 	if (ret)
+ 		return ret;
+@@ -948,7 +955,7 @@
+ 	/* Keep writes in the first quarter of the shortest configured frame. */
+ 	uint64_t deadline = (exposureMax_ + exposureMargin_) * lineDurationUs_ * 250;
+ 	if (!timestamp || now < timestamp || now - timestamp > deadline) {
+-		LOG(Camss, Warning) << "Late SOF " << sequence << "; withholding frame metadata";
++		LOG(Camss, Warning) << "Late SOF " << sequence << " delay_us " << (now - timestamp) / 1000 << "; withholding frame metadata";
+ 		frameStates_.clear();
+ 		lumaSamples_.clear();
+ 		return;
+@@ -983,7 +990,7 @@
+ 	}
+ 
+ 	/* A frame-length change can shorten the sensor's transition delay. */
+-	if (frameLengthChanged)
++	if (frameLengthChanged || (sensor_->model() == "ov13858" && sensorChanged))
+ 		frameStates_[sequence + 1] = std::nullopt;
+ 	auto next = frameStates_.find(sequence + 1);
+ 	if (next != frameStates_.end() && next->second) {
+@@ -1210,7 +1217,7 @@
+ 		total = std::min(total, exposureSlow * gainTop);
+ 	Exposure e;
+ 	if (total <= exposureMax_) {
+-		e = { std::max<int32_t>(100, (int32_t)total), 0, vblankDef_, kWbUnity };
++		e = { std::max<int32_t>(100, (int32_t)total), gainToCode(1.0f), vblankDef_, kWbUnity };
+ 	} else if (total <= exposureMax_ * knee) {
+ 		e = { exposureMax_, gainToCode(total / exposureMax_), vblankDef_, kWbUnity };
+ 	} else if (total <= exposureSlow * knee) {
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.h
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.h
+@@ -98,6 +98,8 @@
+ 	void updateLineDuration();
+ 	int32_t manualExposureMax() const;
+ 	int32_t digitalMax() const;
++	float gainFromCode(int32_t code) const;
++	int32_t gainToCode(float gain) const;
+ 	int applySensor();
+ 	int applyIsp();
+ 	void applyTables();
+--- a/src/libcamera/pipeline/camss/camss_raw_stats.cpp
++++ b/src/libcamera/pipeline/camss/camss_raw_stats.cpp
+@@ -1,8 +1,9 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
+-/* Experimental IMX681 native-4K paired Bayer statistics recorder. */
++/* Experimental native-4K paired Bayer statistics recorder. */
+ #include "camss_raw_stats.h"
+ 
+ #include <array>
++#include <charconv>
+ #include <cerrno>
+ #include <cstdlib>
+ #include <cstring>
+@@ -10,6 +11,8 @@
+ 
+ #include <linux/dma-buf.h>
+ #include <sys/ioctl.h>
++#include <sys/eventfd.h>
++#include <unistd.h>
+ 
+ #include <libcamera/base/log.h>
+ #include <libcamera/control_ids.h>
+@@ -22,9 +25,21 @@
+ LOG_DECLARE_CATEGORY(Camss)
+ 
+ namespace {
+-constexpr unsigned int kStride = 4800;
+-constexpr unsigned int kRawBytes = kStride * 2640;
+-constexpr unsigned int kStep = 8;
++
++template<typename Histogram>
++void writeHistogram(FILE *file, const Histogram &histogram)
++{
++	std::string text;
++	text.reserve(8192);
++	for (unsigned int bin = 0; bin < histogram.size(); bin++) {
++		if (bin)
++			text.push_back(',');
++		char value[16];
++		auto result = std::to_chars(value, value + sizeof(value), histogram[bin]);
++		text.append(value, result.ptr);
++	}
++	fwrite(text.data(), 1, text.size(), file);
++}
+ 
+ unsigned int raw10(const uint8_t *row, unsigned int x)
+ {
+@@ -33,8 +48,9 @@
+ }
+ } /* namespace */
+ 
+-CamssRawStats::CamssRawStats(V4L2VideoDevice *output, const std::string &directory)
+-	: output_(output), directory_(directory)
++CamssRawStats::CamssRawStats(V4L2VideoDevice *output, const std::string &directory, bool rear)
++	: output_(output), directory_(directory), rear_(rear),
++	  stride_(rear ? 5280 : 4800), rawBytes_(stride_ * (rear ? 3136 : 2640))
+ {
+ 	saveRaw_ = std::getenv("LIBCAMERA_CAMSS_RAW_SAVE") != nullptr;
+ 	output_->bufferReady.connect(this, &CamssRawStats::bufferReady);
+@@ -52,8 +68,9 @@
+ 	int ret = output_->getFormat(&fmt);
+ 	if (ret)
+ 		return ret;
+-	if (fmt.size != Size(3840, 2640) || fmt.fourcc.toString() != "pRAA" ||
+-	    fmt.planesCount != 1 || fmt.planes[0].bpl != kStride || fmt.planes[0].size < kRawBytes)
++	if (fmt.size != (rear_ ? Size(4224, 3136) : Size(3840, 2640)) ||
++	    fmt.fourcc.toString() != (rear_ ? "pgAA" : "pRAA") ||
++	    fmt.planesCount != 1 || fmt.planes[0].bpl != stride_ || fmt.planes[0].size < rawBytes_)
+ 		return -EINVAL;
+ 	ret = output_->exportBuffers(4, &buffers_);
+ 	if (ret < 0)
+@@ -85,12 +102,16 @@
+ 	lastRaw_.clear();
+ 	wanted_.clear();
+ 	saved_.clear();
+-	fprintf(log_, "{\"type\":\"header\",\"version\":1,\"raw_size\":[3840,2640],"
+-		"\"stride\":4800,\"format\":\"RGGB10_CSI2P\",\"crop\":[0,240,3840,2160],"
+-		"\"sample_step\":8,\"channels\":[\"R\",\"Gr\",\"Gb\",\"B\"],"
+-		"\"centre_crop_in_output\":[960,540,1920,1080],\"centre_samples_per_channel\":32400,"
++	fprintf(log_, "{\"type\":\"header\",\"version\":2,\"raw_size\":[%u,%u],"
++		"\"stride\":%u,\"format\":\"%s\",\"sample_grid\":[3840,2160],"
++		"\"scaled_size\":[3840,%u],\"crop\":[0,%u,3840,2160],"
++		"\"sample_step\":%u,\"channels\":[\"R\",\"Gr\",\"Gb\",\"B\"],"
++		"\"centre_crop_in_output\":[960,540,1920,1080],\"centre_samples_per_channel\":%u,"
+ 		"\"tiles\":[8,6],\"black_level_assumption\":64,\"valid_quad_range_exclusive\":[72,1000],"
+-		"\"timestamp\":\"buffer completion, not exposure start\"}\n");
++		"\"timestamp\":\"buffer completion, not exposure start\"}\n",
++		rear_ ? 4224 : 3840, rear_ ? 3136 : 2640, stride_,
++		rear_ ? "GRBG10_CSI2P" : "RGGB10_CSI2P", rear_ ? 2850 : 2640, rear_ ? 344 : 240,
++		rear_ ? 16 : 8, rear_ ? 8160 : 32400);
+ 	for (const auto &buffer : buffers_) {
+ 		auto map = std::make_unique<MappedFrameBuffer>(buffer.get(), MappedFrameBuffer::MapFlag::Read);
+ 		if (!map->isValid()) {
+@@ -115,15 +136,40 @@
+ 		return ret;
+ 	}
+ 	running_ = true;
++	if (rear_) {
++		completionFd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
++		if (completionFd_ < 0) {
++			int error = -errno;
++			stop();
++			return error;
++		}
++		completionNotifier_ = std::make_unique<EventNotifier>(completionFd_, EventNotifier::Read);
++		completionNotifier_->activated.connect(this, &CamssRawStats::completionReady);
++		stopping_ = false;
++		worker_ = std::thread(&CamssRawStats::workerLoop, this);
++	}
+ 	return 0;
+ }
+ 
+ void CamssRawStats::stop()
+ {
+-	if (running_) {
+-		running_ = false;
+-		if (output_->streamOff())
+-			failed_ = true;
++	bool wasRunning = running_;
++	running_ = false;
++	completionNotifier_.reset();
++	{
++		std::lock_guard<std::mutex> lock(queueMutex_);
++		stopping_ = true;
++		pending_.clear();
++	}
++	workReady_.notify_one();
++	if (worker_.joinable())
++		worker_.join();
++	if (wasRunning && output_->streamOff())
++		failed_ = true;
++	completed_.clear();
++	if (completionFd_ >= 0) {
++		close(completionFd_);
++		completionFd_ = -1;
+ 	}
+ 	/* Write retained full frames only after streaming has stopped. */
+ 	for (const auto &[request, data] : saved_) {
+@@ -169,6 +215,7 @@
+ 		exposure.value_or(0), gain.value_or(0), wb ? (*wb)[0] : 0, wb ? (*wb)[1] : 0);
+ 	outputCount_++;
+ 	if (saveRaw_ && (request == 58 || request == 59) && meta.status == FrameMetadata::FrameSuccess) {
++		std::lock_guard<std::mutex> lock(saveMutex_);
+ 		wanted_[meta.sequence] = request;
+ 		if (lastSequence_ == meta.sequence)
+ 			saved_[request] = lastRaw_;
+@@ -179,6 +226,59 @@
+ {
+ 	if (!running_)
+ 		return;
++	if (!rear_) {
++		processBuffer(buffer);
++		return;
++	}
++	{
++		std::lock_guard<std::mutex> lock(queueMutex_);
++		pending_.push_back(buffer);
++	}
++	workReady_.notify_one();
++}
++
++void CamssRawStats::workerLoop()
++{
++	for (;;) {
++		FrameBuffer *buffer;
++		{
++			std::unique_lock<std::mutex> lock(queueMutex_);
++			workReady_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
++			if (stopping_)
++				return;
++			buffer = pending_.front();
++			pending_.pop_front();
++		}
++		processBuffer(buffer);
++	}
++}
++
++void CamssRawStats::completionReady()
++{
++	uint64_t count;
++	while (read(completionFd_, &count, sizeof(count)) < 0 && errno == EINTR) {}
++	std::deque<Completion> ready;
++	{
++		std::lock_guard<std::mutex> lock(queueMutex_);
++		ready.swap(completed_);
++	}
++	for (const auto &result : ready) {
++		const auto &meta = result.buffer->metadata();
++		if (result.valid && !failed_) {
++			histogramReady.emit(meta.sequence, meta.timestamp, result.histogram);
++			if (awbStats_)
++				statsReady.emit(meta.sequence, meta.timestamp, result.awb);
++		}
++		if (running_ && output_->queueBuffer(result.buffer)) {
++			failed_ = true;
++			LOG(Camss, Error) << "Cannot requeue paired RAW buffer";
++		}
++	}
++}
++
++void CamssRawStats::processBuffer(FrameBuffer *buffer)
++{
++	Completion result{buffer};
+ 	const auto &meta = buffer->metadata();
+ 	if (meta.status != FrameMetadata::FrameSuccess) {
+ 		failed_ = true;
+@@ -186,27 +286,37 @@
+ 		auto &map = maps_.at(buffer);
+ 		int fd = buffer->planes()[0].fd.get();
+ 		struct dma_buf_sync sync = { DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ };
+-		if (map->planes()[0].size() < kRawBytes || meta.planes()[0].bytesused < kRawBytes ||
++		if (map->planes()[0].size() < rawBytes_ || meta.planes()[0].bytesused < rawBytes_ ||
+ 		    ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync) < 0) {
+ 			failed_ = true;
+ 		} else {
+ 			const uint8_t *data = map->planes()[0].data();
+ 			CamssHighlightAe::Stats stats;
++			if (rear_) {
++				stats.fullSamples = 32400;
++				stats.centreSamples = 8160;
++			}
+ 			auto &hist = stats.full;
+ 			struct Tile {
+ 				std::array<uint64_t, 4> sum{};
+ 				std::array<uint64_t, 4> validSum{};
+ 				unsigned int valid = 0;
++				unsigned int count = 0;
+ 			};
+ 			std::array<Tile, 48> tiles{};
+ 			CamssBayerAwb::Stats awb{};
+-			for (unsigned int y = 0; y < 2160; y += kStep) {
+-				const uint8_t *row = data + (y + 240) * kStride;
+-				for (unsigned int x = 0; x < 3840; x += kStep) {
++			const unsigned int step = rear_ ? 16 : 8;
++			for (unsigned int y = 0; y < 2160; y += step) {
++				unsigned int rawY = rear_ ? (((y + 344) * 3136 / 2850) & ~1u) : y + 240;
++				const uint8_t *row = data + rawY * stride_;
++				for (unsigned int x = 0; x < 3840; x += step) {
++					unsigned int rawX = rear_ ? ((x * 4224 / 3840) & ~1u) : x;
+ 					std::array<unsigned int, 4> quad = {
+-						raw10(row, x), raw10(row, x + 1),
+-						raw10(row + kStride, x), raw10(row + kStride, x + 1)
++						raw10(row, rawX), raw10(row, rawX + 1),
++						raw10(row + stride_, rawX), raw10(row + stride_, rawX + 1)
+ 					};
++					if (rear_)
++						quad = { quad[1], quad[0], quad[3], quad[2] };
+ 					if (awbStats_) {
+ 						auto &fine = awb[(y / 120) * CamssBayerAwb::kColumns + x / 120];
+ 						fine.count++;
+@@ -220,6 +330,7 @@
+ 						}
+ 					}
+ 					Tile &tile = tiles[(y / 360) * 8 + x / 480];
++					tile.count++;
+ 					bool valid = true;
+ 					for (unsigned int c = 0; c < 4; c++) {
+ 						hist[c][quad[c]]++;
+@@ -236,34 +347,36 @@
+ 				}
+ 			}
+ 			if (saveRaw_) {
+-				lastSequence_ = meta.sequence;
+-				lastRaw_.assign(data, data + kRawBytes);
+-				auto it = wanted_.find(meta.sequence);
+-				if (it != wanted_.end())
+-					saved_[it->second] = lastRaw_;
++				std::lock_guard<std::mutex> lock(saveMutex_);
++				if (saved_.size() < 2) {
++					lastSequence_ = meta.sequence;
++					lastRaw_.assign(data, data + rawBytes_);
++					auto it = wanted_.find(meta.sequence);
++					if (it != wanted_.end())
++						saved_[it->second] = lastRaw_;
++				}
+ 			}
+ 			sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+ 			if (ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync) < 0)
+ 				failed_ = true;
++			flockfile(log_);
+ 			fprintf(log_, "{\"type\":\"raw\",\"sequence\":%u,\"timestamp_ns\":%llu,\"histogram\":[",
+ 				meta.sequence, static_cast<unsigned long long>(meta.timestamp));
+ 			for (unsigned int c = 0; c < 4; c++) {
+ 				fprintf(log_, "%s[", c ? "," : "");
+-				for (unsigned int b = 0; b < 1024; b++)
+-					fprintf(log_, "%s%u", b ? "," : "", hist[c][b]);
++				writeHistogram(log_, hist[c]);
+ 				fprintf(log_, "]");
+ 			}
+ 			fprintf(log_, "],\"centre_histogram\":[");
+ 			for (unsigned int c = 0; c < 4; c++) {
+ 				fprintf(log_, "%s[", c ? "," : "");
+-				for (unsigned int b = 0; b < 1024; b++)
+-					fprintf(log_, "%s%u", b ? "," : "", stats.centre[c][b]);
++				writeHistogram(log_, stats.centre[c]);
+ 				fprintf(log_, "]");
+ 			}
+ 			fprintf(log_, "],\"tiles\":[");
+ 			for (unsigned int t = 0; t < 48; t++) {
+ 				const auto &tile = tiles[t];
+-				fprintf(log_, "%s{\"count\":2700,\"valid_count\":%u,\"sum\":[", t ? "," : "", tile.valid);
++				fprintf(log_, "%s{\"count\":%u,\"valid_count\":%u,\"sum\":[", t ? "," : "", tile.count, tile.valid);
+ 				for (unsigned int c = 0; c < 4; c++)
+ 					fprintf(log_, "%s%llu", c ? "," : "", static_cast<unsigned long long>(tile.sum[c]));
+ 				fprintf(log_, "],\"valid_black_subtracted_sum\":[");
+@@ -272,12 +385,33 @@
+ 				fprintf(log_, "]}");
+ 			}
+ 			fprintf(log_, "]}\n");
++			funlockfile(log_);
+ 			rawCount_++;
+-			if (!failed_)
+-				histogramReady.emit(meta.sequence, meta.timestamp, stats);
+-			if (awbStats_ && !failed_)
+-				statsReady.emit(meta.sequence, meta.timestamp, awb);
+-		}
++			if (rear_) {
++				result.valid = !failed_;
++				result.histogram = std::move(stats);
++				result.awb = std::move(awb);
++			} else {
++				if (!failed_)
++					histogramReady.emit(meta.sequence, meta.timestamp, stats);
++				if (awbStats_ && !failed_)
++					statsReady.emit(meta.sequence, meta.timestamp, awb);
++			}
++		}
++	}
++	if (rear_) {
++		{
++			std::lock_guard<std::mutex> lock(queueMutex_);
++			completed_.push_back(std::move(result));
++		}
++		uint64_t count = 1;
++		ssize_t ret;
++		do {
++			ret = write(completionFd_, &count, sizeof(count));
++		} while (ret < 0 && errno == EINTR);
++		if (ret < 0 && errno != EAGAIN)
++			failed_ = true;
++		return;
+ 	}
+ 	if (output_->queueBuffer(buffer)) {
+ 		failed_ = true;
+--- a/src/libcamera/pipeline/camss/camss_raw_stats.h
++++ b/src/libcamera/pipeline/camss/camss_raw_stats.h
+@@ -1,7 +1,12 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
+-/* Experimental IMX681 native-4K paired Bayer statistics recorder. */
++/* Experimental native-4K paired Bayer statistics recorder. */
+ #pragma once
+ 
++#include <atomic>
++#include <condition_variable>
++#include <deque>
++#include <mutex>
++#include <thread>
+ #include <cstdio>
+ #include <map>
+ #include <memory>
+@@ -10,6 +15,7 @@
+ 
+ #include <libcamera/geometry.h>
+ #include <libcamera/base/signal.h>
++#include <libcamera/base/event_notifier.h>
+ 
+ #include "camss_bayer_awb.h"
+ #include "camss_highlight_ae.h"
+@@ -24,7 +30,7 @@
+ class CamssRawStats
+ {
+ public:
+-	CamssRawStats(V4L2VideoDevice *output, const std::string &directory);
++	CamssRawStats(V4L2VideoDevice *output, const std::string &directory, bool rear = false);
+ 	~CamssRawStats();
+ 	int allocate();
+ 	void release();
+@@ -37,13 +43,34 @@
+ 
+ private:
+ 	void bufferReady(FrameBuffer *buffer);
++	void processBuffer(FrameBuffer *buffer);
++	void completionReady();
++	void workerLoop();
++	struct Completion {
++		FrameBuffer *buffer;
++		bool valid = false;
++		CamssHighlightAe::Stats histogram{};
++		CamssBayerAwb::Stats awb{};
++	};
++	std::thread worker_;
++	std::mutex queueMutex_;
++	std::mutex saveMutex_;
++	std::condition_variable workReady_;
++	std::deque<FrameBuffer *> pending_;
++	std::deque<Completion> completed_;
++	bool stopping_ = false;
++	int completionFd_ = -1;
++	std::unique_ptr<EventNotifier> completionNotifier_;
+ 	V4L2VideoDevice *output_;
+ 	std::string directory_;
++	bool rear_;
++	unsigned int stride_;
++	unsigned int rawBytes_;
+ 	std::vector<std::unique_ptr<FrameBuffer>> buffers_;
+ 	std::map<FrameBuffer *, std::unique_ptr<MappedFrameBuffer>> maps_;
+ 	FILE *log_ = nullptr;
+ 	bool running_ = false;
+-	bool failed_ = false;
++	std::atomic<bool> failed_{false};
+ 	bool saveRaw_ = false;
+ 	bool awbStats_ = false;
+ 	unsigned int rawCount_ = 0;
+--- a/src/libcamera/pipeline/camss/camss_highlight_ae.h
++++ b/src/libcamera/pipeline/camss/camss_highlight_ae.h
+@@ -16,6 +16,8 @@
+ 	struct Stats {
+ 		Histogram full{};
+ 		Histogram centre{}; /* middle half of each native-4K axis */
++		unsigned int fullSamples = 129600;
++		unsigned int centreSamples = 32400;
+ 	};
+ 	struct Result {
+ 		bool valid = false;
+@@ -95,7 +97,7 @@
+ 			       double centreClipping = 0.001, double centrePercentile = 0.995)
+ 	{
+ 		if (!centrePriority)
+-			return evaluate(stats.full, wb, meanY, targetY, 129600, 0.995, 0.001, peakTarget);
++			return evaluate(stats.full, wb, meanY, targetY, stats.fullSamples, 0.995, 0.001, peakTarget);
+ 		for (unsigned int c = 0; c < 4; c++)
+ 			for (unsigned int b = 0; b < 1024; b++)
+ 				if (stats.centre[c][b] > stats.full[c][b])
+@@ -104,8 +106,8 @@
+ 		 * limited bright peripheral area while retaining strict central
+ 		 * protection and a whole-frame ceiling. Missing centre data must
+ 		 * never silently relax the conservative limit. */
+-		auto whole = evaluate(stats.full, wb, meanY, targetY, 129600, 0.98, peripheralClipping, peakTarget);
+-		auto centre = evaluate(stats.centre, wb, meanY, targetY, 32400, centrePercentile, centreClipping, peakTarget);
++		auto whole = evaluate(stats.full, wb, meanY, targetY, stats.fullSamples, 0.98, peripheralClipping, peakTarget);
++		auto centre = evaluate(stats.centre, wb, meanY, targetY, stats.centreSamples, centrePercentile, centreClipping, peakTarget);
+ 		whole.valid = whole.valid && centre.valid;
+ 		whole.centrePeak = centre.peak;
+ 		whole.centreSaturated = centre.saturated;

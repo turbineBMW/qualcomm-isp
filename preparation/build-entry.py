@@ -14,7 +14,8 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from inputs import load, require_identity, DLL_SHA256, TUNING_SHA256
+from inputs import load, require_identity, DLL_SHA256
+from sensor_layout import identify
 
 def tmc_inputs(c, colour):
     """Extract the base SW TMC141 descriptor and explicit region 0."""
@@ -26,7 +27,7 @@ def tmc_inputs(c, colour):
         selector, data_off, size = struct.unpack_from('<III', c.f, off + 40)
         if name == b'tmc14_sw_v2' and selector == 5:
             descriptors.append(c.data(data_off, size))
-    if len(regions) != 6 or len(descriptors) != 1 or len(descriptors[0]) != 84:
+    if len(regions) != math.prod(identify(c.f)[1]['tmc_shape']) or len(descriptors) != 1 or len(descriptors[0]) != 84:
         raise ValueError('Unexpected base TMC141 tuning layout')
     return regions[0], descriptors[0]
 
@@ -41,7 +42,7 @@ def main():
     for name in ('inputs', 'oracle', 'dll', 'tuning', 'ife', 'out'):
         setattr(args, name, getattr(args, name).resolve())
     require_identity(args.dll, DLL_SHA256, 'camera DLL')
-    require_identity(args.tuning, TUNING_SHA256, 'IMX681 tuning')
+    identify(args.tuning.read_bytes())
     gain = args.gain
     if not math.isfinite(gain) or not 1 <= gain <= 64 or not math.isfinite(args.drc) or not 1 <= args.drc <= 8:
         raise ValueError('Gain must be in 1..64 and DRC in 1..8')
@@ -130,7 +131,7 @@ def main():
         raise ValueError('Unexpected IFE gamma selection layout')
     gamma_module = colour.get_module(c, 'gamma15', 2)
     selected_gamma = colour.blend(colour.regions(c, gamma_module),
-                                  colour.choose(colour.triggers(c, gamma_module, 2), args.lux_index))
+                                  colour.choose(colour.triggers(c, gamma_module, identify(c.f)[1]['gamma_rows']), args.lux_index))
     gamma_contract = gamma_chain.verify(args.ife, list(ife_curves[0]),
                                        (out / 'iq-ltm.bin').read_bytes(), (out / 'gamma.bin').read_bytes(),
                                        colour.gamma_lut(selected_gamma),

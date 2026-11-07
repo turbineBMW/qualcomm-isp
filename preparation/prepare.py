@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Brandon Williams <turbine.bmw@gmail.com>
 # SPDX-License-Identifier: MIT
-"""Prepare local Surface IMX681 camera assets from two explicitly supplied driver files."""
+"""Prepare local Surface IMX681 or OV13858 camera assets from two explicitly supplied driver files."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
@@ -18,7 +18,8 @@ import time
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from inputs import DLL_SHA256, TUNING_SHA256, REFERENCE_GAINS, ife_profile, load, prepare, require_identity, sha
+from inputs import DLL_SHA256, TUNING_SHA256, REFERENCE_GAINS, ife_profile, reference_gains, load, prepare, require_identity, sha
+from sensor_layout import LAYOUTS
 
 FILES = ('cfg.bin', 'seed-cfg.bin', 'seed-iq.bin', 'seed-striping.bin',
          'iq-ltm.bin', 'striping.bin', 'pre-ltm.bin', 'post.bin', 'ltm-luts.bin',
@@ -32,7 +33,7 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
 
 
-def validate_request(dll, tuning, output, jobs):
+def validate_request(dll, tuning, output, jobs, sensor='imx681'):
     if not 1 <= jobs <= 8:
         raise ValueError('--jobs must be between 1 and 8')
     if output.exists() or output.is_symlink():
@@ -40,24 +41,27 @@ def validate_request(dll, tuning, output, jobs):
     if output.is_relative_to(HERE.parent):
         raise ValueError('Keep generated camera assets outside the source repository')
     require_identity(dll, DLL_SHA256, 'camera DLL')
-    require_identity(tuning, TUNING_SHA256, 'IMX681 tuning')
+    require_identity(tuning, LAYOUTS[sensor]['sha256'], sensor + ' tuning')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dll', type=Path, required=True, help='Owner-supplied QcDeviceMFT8380.dll')
-    parser.add_argument('--tuning', type=Path, required=True, help='Owner-supplied com.surface.tuned.ffc_imx681.bin')
+    parser.add_argument('--tuning', type=Path, required=True, help='Owner-supplied tuning file matching --sensor')
     parser.add_argument('--output', type=Path, required=True, help='New asset directory outside this repository')
     parser.add_argument('--jobs', type=int, default=2)
+    parser.add_argument('--sensor', choices=tuple(LAYOUTS), default='imx681')
     parser.add_argument('--check-inputs', action='store_true', help='Check identities/paths without compiling or executing the DLL')
     args = parser.parse_args()
     dll, tuning = args.dll.resolve(strict=True), args.tuning.resolve(strict=True)
     # Preserve the final path component so dangling symlinks are also rejected.
     output = args.output.absolute()
     output = output.parent.resolve() / output.name
-    validate_request(dll, tuning, output, args.jobs)
+    validate_request(dll, tuning, output, args.jobs, args.sensor)
+    layout = LAYOUTS[args.sensor]
+    gains_reference = reference_gains(tuning, args.sensor)
     if args.check_inputs:
-        print('Supported DLL and IMX681 tuning hashes; output path is available.')
+        print(f'Supported DLL and {args.sensor} tuning hashes; output path is available.')
         return
     if platform.machine() != 'aarch64':
         raise ValueError('Generation requires native aarch64 Linux; input checking works on other hosts')
@@ -78,9 +82,9 @@ def main():
         shutil.copyfile(dll, copied_dll)
         shutil.copyfile(tuning, copied_tuning)
         require_identity(copied_dll, DLL_SHA256, 'copied DLL')
-        require_identity(copied_tuning, TUNING_SHA256, 'copied tuning')
-        derived = prepare(copied_tuning, work / 'inputs')
-        (assets / 'ife.yaml').write_text(yaml.safe_dump(ife_profile(copied_tuning), sort_keys=False))
+        require_identity(copied_tuning, layout['sha256'], 'copied tuning')
+        derived = prepare(copied_tuning, work / 'inputs', args.sensor)
+        (assets / 'ife.yaml').write_text(yaml.safe_dump(ife_profile(copied_tuning, args.sensor), sort_keys=False))
         oracle = work / 'slrun'
         command = [compiler, *BUILD_FLAGS, '-o', str(oracle), str(HERE / 'slrun.c'), '-lm', '-lcrypto']
         subprocess.run(command, check=True, timeout=120)
@@ -142,7 +146,7 @@ def main():
                              gain_step_ev=.25, tone_step_ev=.125, entries=entries,
                              cct=5262.96630859375, index=200, sharpness=.75,
                              anr_lighter_from=12, anr_lighter_ev=1.0,
-                             wb_reference=REFERENCE_GAINS, wb_log_envelope=.051,
+                             wb_reference=gains_reference, wb_log_envelope=.051,
                              runtime_dll=False, source='Explicit offline tuning grid; not captured-frame metadata',
                              note='Lab bounded display-luma tone controller; not Windows AE/DRC runtime reconstruction',
                              oracle_sha256=sha(oracle), dll_sha256=DLL_SHA256,
@@ -156,8 +160,9 @@ def main():
         for filename in ('pd10.py', 'ipe-adaptive.py'):
             sources['runtime/' + filename] = sha(HERE.parent / 'runtime' / filename)
         write_json(assets / 'preparation.json', {
-            'schema': 1, 'profile': 'surface-pro-11-denali-oled',
-            'inputs': {'QcDeviceMFT8380.dll': DLL_SHA256, 'com.surface.tuned.ffc_imx681.bin': TUNING_SHA256},
+            'schema': 1, 'profile': 'surface-pro-11-denali-oled' + ('-rear' if args.sensor == 'ov13858' else ''),
+            'sensor': args.sensor,
+            'inputs': {'QcDeviceMFT8380.dll': DLL_SHA256, layout['filename']: layout['sha256']},
             'sources': sources, 'derived_input_hashes': derived,
             'helper_sha256': sha(oracle), 'compiler_flags': BUILD_FLAGS + ['-lm', '-lcrypto'],
             'compiler': subprocess.check_output([compiler, '--version'], text=True).splitlines()[0],

@@ -24,5 +24,19 @@
   "source_url": "https://github.com/turbineBMW/libcamera/archive/aeae1f0c7155ae2a175f27b571496f87943197f9.tar.gz",
   "source_sha256": "a8d3b2c225d4c2b87a9b8149c6e34ab0943e3df67232c8879aedfb397e9a52cd",
   "patch_sha256": "8af163523d042301f4b0ff153ab98a8010421547aecda129a55d871c8e400bff",
-  "reconstruction": "Pinned public archive plus complete patch matches every file of the accepted source snapshot."
+  "reconstruction": "The pinned archive plus libcamera-working.patch reconstructs the accepted front snapshot above. Apply incremental_patches in order for the packaged source; their file hashes describe the additional changes.",
+  "incremental_patches": [
+    {
+      "path": "experiments/ov13858/libcamera.patch",
+      "sha256": "29901088e22a20961d399b8eb107ba1086850acb422e09199668a515e4baafa5",
+      "description": "Opt-in OV13858 ISP, paired RAW statistics and rear worker-thread processing",
+      "modified_files": {
+        "src/libcamera/pipeline/camss/camss_isp_inline.cpp": "299f4ee0273206eafd3654644a6b401e1ea53ebd2262f6627b01b56e7a10bcd2",
+        "src/libcamera/pipeline/camss/camss_isp_inline.h": "f50be7ddbdc40e985161aa63ef9e511f33b69d8064b710003c22bfa356493644",
+        "src/libcamera/pipeline/camss/camss_highlight_ae.h": "937dc914c0d380f3a740abff57d7ebcb42747d99eeb024960d0a3b5d2e403091",
+        "src/libcamera/pipeline/camss/camss_raw_stats.cpp": "6341342ca7d14a027a020e5a3e01d0eee320df0ef47f9f783db2c2cbbcc357d5",
+        "src/libcamera/pipeline/camss/camss_raw_stats.h": "09b30c3415e8d31c2f380dd3aec2439889bf5bd477fc8ecc9717f4b48dde41f1"
+      }
+    }
+  ]
 }

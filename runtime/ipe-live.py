@@ -14,6 +14,7 @@ import argparse
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import faulthandler
 import importlib.util
 import hashlib
 import json
@@ -33,6 +34,7 @@ HERE = Path(__file__).resolve().parent
 import sys
 sys.path.insert(0, str(HERE))
 import isp_config
+import proctree
 CONFIG, BOARD = isp_config.load()
 CAPTURE_USER = isp_config.identity()
 ASSETS = Path(CONFIG['assets'])
@@ -42,14 +44,35 @@ W, H, PAD = 3840, 2160, 2176
 SIZE = W * H * 3 // 2
 CONTROLS = dict(AeEnable=False, AwbEnable=False, ExposureTime=32878,
                 AnalogueGain=1.750427, ColourGains=[1.884766, 1.903320])
+CONTROLS.update(BOARD.get('initial_controls', {}))
 FIRST_SEQUENCE = 12   # startup frames before this are never processed
 FRESH_NS = 500_000_000
+STOP_GRACE = 15   # seconds from stop to finished cleanup; session.py waits 20
+
+
+def stop_watchdog(stop, cleaned):
+    """Make a stop win even if a pipeline stage or cleanup step blocks.
+
+    Dumps every thread's stack to the session log, kills the camera tree
+    (runuser -> cam -> IPA proxy, outside our process group) and exits, so
+    the kernel releases the ICP and capture descriptors and session.py can
+    unload ICP.
+    """
+    stop.wait()
+    if cleaned.wait(STOP_GRACE):
+        return
+    print(f'STOP WATCHDOG: cleanup not finished {STOP_GRACE} s after stop; dumping stacks, killing the camera, exiting',
+          file=sys.stderr, flush=True)
+    faulthandler.dump_traceback(all_threads=True)
+    killed = proctree.kill_tree(os.getpid(), include_root=False)
+    print(f'STOP WATCHDOG: killed {killed}', file=sys.stderr, flush=True)
+    os._exit(75)
 
 
 def limit_start_exposure(exposure, gain, slow_frame):
     """Fit a saved shutter to this session's budget, preserving sensitivity."""
     limited = min(exposure, int(CONTROLS['ExposureTime'] * slow_frame))
-    return limited, min(16.0, gain * exposure / limited)
+    return limited, min(BOARD.get('max_analogue_gain', 16.0), gain * exposure / limited)
 
 
 def module(name, file):
@@ -66,7 +89,9 @@ def run(*args):
 def as_user(*args):
     return ['runuser', '-u', CAPTURE_USER.pw_name, '--', 'env', '-u', 'LIBCAMERA_CAM_LEASE_SOCKET', '-u', 'LIBCAMERA_CAMSS_RAW_STATS',
             '-u', 'LIBCAMERA_CAMSS_RAW_SAVE', f'XDG_RUNTIME_DIR=/run/user/{CAPTURE_USER.pw_uid}',
-            f'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{CAPTURE_USER.pw_uid}/bus', *map(str, args)]
+            f'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{CAPTURE_USER.pw_uid}/bus',
+            *(['LIBCAMERA_CAMSS_OV13858_ISP=1'] if BOARD.get('sensor_module') == 'ov13858' else []),
+            *map(str, args)]
 
 
 def stop_process(process, camera=False):
@@ -135,7 +160,7 @@ class Capture:
             # Unix socket paths are limited to 108 bytes; evidence directories
             # can be longer than that, so the lease socket lives in a short
             # runtime directory the camera user can traverse.
-            runtime = Path('/run/qualcomm-isp/capture')
+            runtime = Path(BOARD.get('capture_runtime', '/run/qualcomm-isp/capture'))
             runtime.mkdir(mode=0o755, parents=True, exist_ok=True)
             self.leases = module('ipe_capture_lease', 'ipe-capture-lease.py').Receiver(runtime/f'capture-{os.getpid()}.sock', uid=CAPTURE_USER.pw_uid, gid=CAPTURE_USER.pw_gid)
         else:
@@ -493,7 +518,7 @@ def main():
     colour = locus = None
     if adaptive and a.cct_sets and (a.colour_sets/'colour-sets.json').exists():
         colour = adaptive.ColourSets(a.colour_sets)
-        locus = adaptive.Locus(json.loads((ASSETS/BOARD['awb_reference']).read_text())['references'])
+        locus = adaptive.Locus(json.loads((ASSETS/BOARD['awb_reference']).read_text())['references'], reference_gains=bank.info['wb_reference'])
     striping_capacity = max(e['files'][n]['size'] for e in bank.entries.values()
                             for n in ('striping.bin','seed-striping.bin')) if bank else 0
     if bank:
@@ -547,7 +572,7 @@ def main():
             saved = json.loads(a.state_file.read_text())
             age_h = (time.time() - saved['saved_at']) / 3600
             exposure, gain, wb = int(saved['ExposureTime']), float(saved['AnalogueGain']), [float(x) for x in saved['ColourGains']]
-            if age_h < 24 and 200 <= exposure <= 67000 and 1 <= gain <= 16 and all(0.25 <= x <= 4 for x in wb):
+            if age_h < 24 and 200 <= exposure <= 67000 and 1 <= gain <= BOARD.get('max_analogue_gain', 16.0) and all(0.25 <= x <= 4 for x in wb):
                 exposure, gain = limit_start_exposure(exposure, gain, a.slow_frame)
                 initial_controls.update(ExposureTime=exposure, AnalogueGain=gain, ColourGains=wb)
                 warm_start = dict(saved, age_hours=age_h)
@@ -569,6 +594,10 @@ def main():
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
+    # `kill -USR1 <pid>` dumps every thread's stack into the session log.
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
+    cleaned = threading.Event()
+    threading.Thread(target=stop_watchdog, args=(stop, cleaned), name='stop-watchdog', daemon=True).start()
     session = capture = publisher = publish_log = handoff = transport = None
     prep_pool = read_pool = None
     report = dict(capture_transport=a.capture_transport, readback=a.readback, transport=a.transport, system_pipewire=a.system_pipewire,
@@ -837,6 +866,7 @@ def main():
             report['completed'] = False
         # Retained frames are a deque; an early failure reaches here before the success path lists them.
         (out/'report.json').write_text(json.dumps(report, indent=2, default=list)+'\n')
+        cleaned.set()
         if cleanup_errors:
             raise RuntimeError('Live cleanup failed: '+'; '.join(cleanup_errors))
 

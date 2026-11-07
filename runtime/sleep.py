@@ -11,6 +11,7 @@ import subprocess
 
 SOCKET = 'qualcomm-isp-worker.socket'
 WORKER = 'qualcomm-isp-worker.service'
+UNITS = (SOCKET, WORKER, 'qualcomm-isp-rear-worker.socket', 'qualcomm-isp-rear-worker.service')
 STATE = Path('/run/qualcomm-isp/sleep-state.json')
 MODULE = Path('/sys/module/qcom_camss_icp')
 import sys
@@ -33,7 +34,7 @@ def restore():
     if not STATE.exists():
         return
     state = json.loads(STATE.read_text())
-    units = [unit for unit in (SOCKET, WORKER) if state[unit]]
+    units = [unit for unit in UNITS if state.get(unit, False)]
     if units:
         control('start', *units)
     STATE.unlink()
@@ -43,14 +44,16 @@ def restore():
 def prepare():
     if STATE.exists():
         raise RuntimeError('A previous sleep transition has not been restored')
-    state = {unit: active(unit) for unit in (SOCKET, WORKER)}
+    state = {unit: active(unit) for unit in UNITS}
     STATE.parent.mkdir(parents=True, exist_ok=True)
     # Save before stopping so ExecStopPost can also recover an interrupted pre-hook.
     with STATE.open('x') as stream:
         json.dump(state, stream)
     try:
         # Stop activation too: an open PipeWire consumer keeps asking for frames.
-        control('stop', SOCKET, WORKER)
+        running = [unit for unit in UNITS if state[unit]]
+        if running:
+            control('stop', *running)
         with LOCK.open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if MODULE.exists():

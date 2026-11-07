@@ -9,11 +9,13 @@ in the Windows callbacks; no assumption that every region field is a float.
 import hashlib
 import math
 import struct
+from sensor_layout import identify
 
 
 def tree(chrom, colour, kind):
     name, occurrence, size, leaves = {'tmc': ('tmc14', 1, 368, 3),
                                       'ltm': ('ltm16', 0, 716, 4)}[kind]
+    shape = identify(chrom.f)[1][kind + '_shape']
     parts = colour.get_module(chrom, name, occurrence)
     controls = next(p for p in parts if p[0] == 'control_var_type')
     if chrom.data(controls[1], controls[2]) != struct.pack('<3I', 2, 5, 0):
@@ -23,7 +25,7 @@ def tree(chrom, colour, kind):
     region_ids = [p[3] for p in parts if p[0] == 'region' and p[2]]
 
     def read(p, depth):
-        expected = (2, 1, leaves)[depth]
+        expected = shape[depth]
         if p[2] != expected * 24:
             raise ValueError('Unexpected tone trigger count')
         result = []
@@ -41,7 +43,7 @@ def tree(chrom, colour, kind):
                     raise ValueError('Invalid tone leaf reference')
                 node.update(region=region_ids.index(region_id + 1), data=chrom.data(region[1], region[2]))
             else:
-                if count != (1, leaves)[depth] or has_region or region[2] or child[0] != 'trigger':
+                if count != shape[depth + 1] or has_region or region[2] or child[0] != 'trigger':
                     raise ValueError('Invalid tone child reference')
                 node['children'] = read(child, depth + 1)
             result.append(node)

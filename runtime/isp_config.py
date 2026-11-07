@@ -51,17 +51,22 @@ def preflight():
         raise ValueError('Board does not match the selected profile')
     if 'iommu.passthrough=0' not in Path('/proc/cmdline').read_text().split():
         raise ValueError('The qualified configuration requires iommu.passthrough=0')
-    manifest = json.loads(Path(profile['kernel_manifest']).read_text())
+    # The kernel package writes the manifest next to its modules: {release} is the running kernel.
+    manifest = json.loads(Path(profile['kernel_manifest'].format(release=os.uname().release)).read_text())
     if manifest['kernel_release'] != os.uname().release:
         raise ValueError('Kernel release does not match the camera build manifest')
-    for name in ('qcom_camss', 'qcom_camss_icp', 'imx681'):
+    sensor_module = profile.get('sensor_module', 'imx681')
+    identities = dict(manifest['modules'])
+    if sensor_module not in identities and 'sensor_identity' in profile:
+        identities[sensor_module] = profile['sensor_identity']
+    for name in ('qcom_camss', 'qcom_camss_icp', sensor_module):
         for field in ('srcversion', 'vermagic'):
             actual = subprocess.check_output(['modinfo', '-F', field, name], text=True).strip()
-            if actual != manifest['modules'][name][field]:
+            if actual != identities[name][field]:
                 raise ValueError(f'{name}: {field} mismatch')
         if name != 'qcom_camss_icp':
             actual = Path(f'/sys/module/{name}/srcversion').read_text().strip()
-            if actual != manifest['modules'][name]['srcversion']:
+            if actual != identities[name]['srcversion']:
                 raise ValueError(f'{name}: loaded module mismatch')
     for key in ('cam', 'bridge'):
         if not Path(config[key]).is_file():

@@ -12,7 +12,7 @@
   "node_name": "sp11-ipe-preview",
   "description": "Built-in Front Camera",
   "raw_node_name": "libcamera_input._base_soc_0_cci_ac16000_i2c-bus_1_camera_1a",
-  "kernel_manifest": "/usr/share/doc/linux-omarchy-isp/build-artifacts.json",
+  "kernel_manifest": "/usr/lib/modules/{release}/qualcomm-isp-manifest.json",
   "program_bank": "bank",
   "ife_tuning": "ife.yaml",
   "awb_reference": "awb-reference.json"

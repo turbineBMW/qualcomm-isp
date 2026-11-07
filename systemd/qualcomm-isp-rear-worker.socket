@@ -1,0 +1,14 @@
+[Unit]
+ConditionPathExists=/etc/qualcomm-isp/rear.json
+ConditionPathExists=/usr/lib/modules/%v/qualcomm-isp-manifest.json
+Description=Qualcomm ISP rear camera worker control socket
+ConditionFirmware=device-tree-compatible(microsoft,denali-oled)
+
+[Socket]
+ListenSequentialPacket=/run/qualcomm-isp/rear-control
+SocketMode=0660
+SocketGroup=video
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
