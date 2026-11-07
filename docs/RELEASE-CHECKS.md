@@ -93,3 +93,29 @@ sensor or driver version is qualified by these results.
 - These checks establish inventory behavior on synthetic fixtures and one real
   package. Candidate matches can include unrelated support packages and do not
   establish camera support or identify the active sensor on another machine.
+
+## Kernel 7.3-25.1 and runtime 0.1-8 (2026-11-07)
+
+- `packaging/kernel` now holds the Surface Pro 11 `linux-omarchy` 7.3-25.1
+  recipe (`turbineBMW/surface-pro-11-omarchy` 213b706) built as
+  `linux-omarchy-isp`. The 69 ISP patches are byte-identical to the
+  7.2.8-13.1 series (2300-2368), renumbered 3300-3368; `tools/kernel-sources.py`
+  regenerated `ISP-SOURCES.json` and checks that every patch is in `source=()`.
+- The installed kernel was built from this recipe (53 min full build) and then
+  repackaged with `makepkg -R` after two packaging-only changes: `package()`
+  writes `build-artifacts.json`, and the package no longer conflicts with or
+  replaces `linux-omarchy-n1x`. The repackaged `vmlinuz` is identical to the
+  booted one, the 8,507 modules match, and the generated manifest equals the
+  hand-made one it replaces apart from its status line.
+- `qualcomm-isp-runtime 0.1-8` (stop-path hardening, `proctree.py`, bridge
+  `1.6.9-icp-recovery-timestamps-nolink`) built with its check phase: handoff
+  13, daemon 9, session 2, capture-lease 16 and the PD10 and sleep-hook tests
+  passed. Every installed Python module is identical to the source.
+- Installed together with `pacman -U`, overwriting only the two files that had
+  been installed by hand (the manifest and `proctree.py`); `pacman -Qkk`
+  reports no altered runtime file. Preflight passed and a 150-frame native 4K
+  RGBA consumer completed in 6.7 s with ICP unloaded afterwards.
+- `reuse lint` passes for all 717 files; the per-patch license overrides were
+  regenerated from the SPDX identifiers in the 7.3 patch set.
+
+Camera suspend/resume, Snapshot and Chromium were not repeated on 7.3.

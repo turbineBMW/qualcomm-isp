@@ -25,7 +25,7 @@ SPDX-FileCopyrightText = "2026 Brandon Williams <turbine.bmw@gmail.com>"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
-path = ["packaging/kernel/PKGBUILD", "packaging/kernel/README.md", "packaging/kernel/UPGRADING-7.3.md", "packaging/kernel/.omarchy/package.json"]
+path = ["packaging/kernel/PKGBUILD", "packaging/kernel/README.md", "packaging/kernel/UPGRADING-7.3.md", "packaging/kernel/*.json"]
 precedence = "closest"
 SPDX-FileCopyrightText = ["David Heinemeier Hansson", "The Omarchy Authors", "The Arch Linux contributors", "2026 Brandon Williams <turbine.bmw@gmail.com>"]
 SPDX-License-Identifier = "MIT"
@@ -64,42 +64,28 @@ SPDX-FileCopyrightText = "2026 Brandon Williams <turbine.bmw@gmail.com>"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
-path = ["packaging/kernel/0280-mm-updates.patch", "packaging/kernel/0510-sound-updates.patch", "packaging/kernel/0560-input-updates.patch", "packaging/kernel/0740-hwmon-updates.patch"]
-precedence = "override"
-SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
-SPDX-License-Identifier = "(GPL-2.0-only) AND (GPL-2.0-or-later)"
-SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
-
-[[annotations]]
-path = ["packaging/kernel/0511-asoc-updates.patch"]
-precedence = "override"
-SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
-SPDX-License-Identifier = "((GPL-2.0-only OR BSD-3-Clause)) AND ((GPL-2.0-only OR MIT)) AND (GPL-2.0-only) AND (GPL-2.0-only WITH Linux-syscall-note) AND (GPL-2.0-or-later)"
-SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
-
-[[annotations]]
-path = ["packaging/kernel/0800-platform-updates.patch"]
-precedence = "override"
-SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
-SPDX-License-Identifier = "(GPL-2.0-only) AND (GPL-2.0-or-later) AND (GPL-2.0-or-later WITH Linux-syscall-note)"
-SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
-
-[[annotations]]
 path = ["packaging/kernel/1030-n1x-audio.patch"]
 precedence = "override"
 SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
-SPDX-License-Identifier = "((GPL-2.0-only OR BSD-3-Clause)) AND (GPL-2.0-only)"
+SPDX-License-Identifier = "(GPL-2.0-only) AND ((GPL-2.0-only OR BSD-3-Clause))"
 SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
 
 [[annotations]]
-path = ["packaging/kernel/2117-dt-bindings-input-Document-hid-over-spi-DT-schema.patch", "packaging/kernel/2121-dt-bindings-media-add-OV13858-and-VD55G0-sensors.patch"]
+path = ["packaging/kernel/2118-dt-bindings-input-Document-hid-over-spi-DT-schema.patch", "packaging/kernel/2122-dt-bindings-media-add-OV13858-and-VD55G0-sensors.patch", "packaging/kernel/2321-dt-bindings-firmware-arm-scmi-Add-Qualcomm-Generic-E.patch", "packaging/kernel/2500-arm64-dts-qcom-zenbook-a16-describe-the-EC-Wi-Fi-Bluetooth-and-board-supplies.patch"]
 precedence = "override"
 SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
-SPDX-License-Identifier = "((GPL-2.0-only OR BSD-2-Clause)) AND (GPL-2.0-only)"
+SPDX-License-Identifier = "(GPL-2.0-only) AND ((GPL-2.0-only OR BSD-2-Clause))"
 SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
 
 [[annotations]]
-path = ["packaging/kernel/2346-media-qcom-camss-gamma-table-and-colour-matrix-contr.patch"]
+path = ["packaging/kernel/2384-arm64-dts-qcom-Add-the-Microsoft-Surface-Laptop-8.patch", "packaging/kernel/2512-arm64-dts-qcom-Add-the-Acer-Aspire-14-AI-and-16-AI.patch", "packaging/kernel/2513-arm64-dts-qcom-x1-acer-swift-14-Add-support-for-Acer-Swift-14.patch", "packaging/kernel/2521-arm64-dts-qcom-Add-dts-for-HP-EliteBook-6-G1q.patch", "packaging/kernel/2530-arm64-dts-qcom-Add-the-Dell-Latitude-5455.patch", "packaging/kernel/2541-arm64-dts-qcom-Add-HP-EliteBook-X-G2q-14-AI.patch", "packaging/kernel/2551-arm64-dts-qcom-glymur-Add-Lenovo-Yoga-Slim-7x-Gen11.patch", "packaging/kernel/2561-arm64-dts-qcom-Add-Lenovo-ThinkPad-T14s-Gen-7.patch", "packaging/kernel/2571-arm64-dts-qcom-Add-HP-OmniBook-X-16-cp1.patch", "packaging/kernel/2581-arm64-dts-qcom-Add-support-for-Acer-Swift-Go-Pro-AI-.patch", "packaging/kernel/2592-arm64-dts-qcom-Add-hamoa-Samsung-Galaxy-Book4-Edge-d.patch", "packaging/kernel/2602-arm64-dts-qcom-Add-Lenovo-IdeaPad-Slim-5x-14Q8X9.patch", "packaging/kernel/2610-arm64-dts-qcom-Add-Dell-Inspiron-14-Plus-5441.patch", "packaging/kernel/2631-arm64-dts-qcom-add-HP-OmniBook-Ultra-14-kg0xxx.patch", "packaging/kernel/2641-arm64-dts-qcom-glymur-Add-Asus-Zenbook-A14-UX3407NA.patch", "packaging/kernel/2651-arm64-dts-qcom-Add-the-HP-OmniBook-5-14.patch", "packaging/kernel/2662-arm64-dts-qcom-Add-the-ASUS-Vivobook-S16-S3607QA.patch", "packaging/kernel/2671-arm64-dts-qcom-Add-the-Lenovo-IdeaPad-5x-2-in-1.patch", "packaging/kernel/2681-arm64-dts-qcom-Add-the-Lenovo-IdeaPad-Slim-3x.patch", "packaging/kernel/2691-arm64-dts-qcom-Add-the-ASUS-Vivobook-16-X1607QA.patch", "packaging/kernel/2692-arm64-dts-qcom-x126100-asus-vivobook-16-Build-on-pur.patch", "packaging/kernel/2711-arm64-dts-qcom-Add-the-HP-OmniBook-5-16-bf1xxx.patch", "packaging/kernel/2722-arm64-dts-qcom-glymur-Add-the-Anduril-BlueChip.patch"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
+SPDX-License-Identifier = "(BSD-3-Clause) AND (GPL-2.0-only)"
+SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
+
+[[annotations]]
+path = ["packaging/kernel/3346-media-qcom-camss-gamma-table-and-colour-matrix-contr.patch"]
 precedence = "override"
 SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
 SPDX-License-Identifier = "(GPL-2.0-only) AND (GPL-2.0-only WITH Linux-syscall-note)"

@@ -1,17 +1,20 @@
 # Install the experimental runtime
 
 This is currently a Surface Pro 11 Denali OLED profile on the verified
-`7.2.8-13.1-omarchy-isp+` kernel. Other X1E machines first need their own sensor,
+`7.3.0-25.1-omarchy-isp` kernel. Other X1E machines first need their own sensor,
 firmware and DT qualification. Changing the profile does not make the Surface
 IPE program bank correct for another sensor.
 
 ## Kernel
 
 `packaging/kernel` contains the co-installable `linux-omarchy-isp` recipe based
-on Omarchy ARM 7.2.8-13. Build with `makepkg` on aarch64 after installing its
-build dependencies and importing the recipe's public verification keys into
-your build user's keyring. The recipe preserves upstream source signatures.
-The adjacent README and upgrade notes originate in the pinned Omarchy recipe.
+on the Surface Pro 11 `linux-omarchy` 7.3-25.1 recipe (Omarchy ARM 7.3-25).
+Build with `makepkg` on aarch64 after installing its build dependencies and
+importing the recipe's public verification keys into your build user's
+keyring. The recipe preserves upstream source signatures. The adjacent README
+and upgrade notes originate in the pinned base recipe. The package writes the
+build manifest the runtime's preflight checks
+(`/usr/share/doc/linux-omarchy-isp/build-artifacts.json`).
 
 Installing a kernel package is not a complete board boot setup. The tested
 Surface boot entry uses the Denali OLED DTB and `iommu.passthrough=0`, with the

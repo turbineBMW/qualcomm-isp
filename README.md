@@ -41,7 +41,7 @@ developers can begin source review, platform inventory and staged bring-up.
 | --- | --- |
 | Runtime transport, capture leases, PipeWire publication and lifecycle | Reusable Linux code; client UID and media/sensor numbers are discovered dynamically |
 | X1E CAMSS/IFE/ICP changes | Starting point for X1E bring-up; this is still an experimental debugfs-driven IPE path |
-| Kernel integration | Omarchy ARM 7.2.8-13 plus 66 Surface prerequisite patches and 69 ISP patches; not yet a minimal generic series |
+| Kernel integration | The Surface Pro 11 `linux-omarchy` 7.3-25.1 recipe (Omarchy ARM 7.3-25 plus its Surface patches) and 69 ISP patches; not yet a minimal generic series |
 | Board DT, IMX681 controls, firmware name, IOMMU/mapping expectations | Qualified on Denali OLED only |
 | Board profile, IFE tuning, AWB references and IPE program bank | Specific to the tested sensor/mode/firmware; not transferable by changing a model name |
 
@@ -62,6 +62,21 @@ in `/etc/qualcomm-isp/config.json`; external board data belongs under
 or checkout path. Installation does not automatically enable the services.
 
 ## Validation
+
+On 2026-11-07, kernel `7.3.0-25.1-omarchy-isp`, private libcamera `0.7.2-4`
+and runtime `0.1-8` passed on the Surface Pro 11:
+
+- Preflight, and 150-frame native 4K RGBA PipeWire consumers in about 7 s,
+  with ICP unloaded and runtime usage back to zero after every stop.
+- A slow 4K PNG consumer followed by ordinary consumers, repeated: every
+  consumer completed (the bridge no longer holds a frame across a disconnect).
+- A forced hang (`ipe-live` stopped with SIGSTOP): the session tree was killed,
+  ICP unloaded and the next start worked; the stop finished 20.8 s after it
+  was requested.
+- The first camera session after a cold boot stopped in 0.37 s.
+
+Snapshot, Chromium and suspend/resume with the camera were not repeated on
+7.3; the 2026-10-17 results below are from 7.2.8.
 
 On 2026-10-17, kernel `7.2.8-13.1-omarchy-isp+`, private libcamera `0.7.2-2`
 and runtime `0.1-3` passed:

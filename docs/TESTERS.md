@@ -156,7 +156,9 @@ suspend results. A compiled DTB or enumerated node is not a camera test.
 
 ## Current evidence
 
-- Kernel: Omarchy ARM 7.2.8-13 base, ISP candidate 7.2.8-13.1.
+- Kernel: Omarchy ARM 7.3-25 base (Surface Pro 11 recipe 7.3-25.1), ISP
+  package 7.3-25.1 since 2026-11-07; the results below were first taken on
+  7.2.8-13.1.
 - Board: Surface Pro 11, Denali OLED, IMX681 front camera.
 - Original runtime: 4K processed capture, Snapshot, Chromium Mozilla
   getUserMedia, and idle/active-camera system suspend passed.
