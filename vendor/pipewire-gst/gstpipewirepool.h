@@ -21,6 +21,8 @@ G_DECLARE_FINAL_TYPE (GstPipeWirePool, gst_pipewire_pool, GST, PIPEWIRE_POOL, Gs
 
 #define PIPEWIRE_POOL_MIN_BUFFERS 2u
 #define PIPEWIRE_POOL_MAX_BUFFERS 16u
+/* acquire_buffer: the stream stopped streaming while starved; drop the frame */
+#define GST_PIPEWIRE_POOL_FLOW_DROP GST_FLOW_CUSTOM_SUCCESS
 
 /* Only available in GStreamer 1.22+ */
 #ifndef GST_VIDEO_FORMAT_INFO_IS_VALID_RAW

@@ -290,18 +290,28 @@ acquire_buffer (GstBufferPool * pool, GstBuffer ** buffer,
             3 * (gint64) G_USEC_PER_SEC * GST_VIDEO_INFO_FPS_D (&p->video_info) /
             GST_VIDEO_INFO_FPS_N (&p->video_info));
       if (!g_cond_wait_until (&p->cond, GST_OBJECT_GET_LOCK (pool), deadline)) {
+        gboolean streaming;
+
         deadline = 0;
         /* Do not take the PipeWire loop lock while holding the pool lock.
          * State changes and buffer removal can acquire them in reverse. */
         GST_OBJECT_UNLOCK (pool);
         pw_thread_loop_lock (s->core->loop);
-        if (s->pwstream != NULL &&
-            pw_stream_get_state (s->pwstream, NULL) == PW_STREAM_STATE_STREAMING &&
-            pw_stream_is_driving (s->pwstream)) {
+        streaming = s->pwstream != NULL &&
+            pw_stream_get_state (s->pwstream, NULL) == PW_STREAM_STATE_STREAMING;
+        if (streaming && pw_stream_is_driving (s->pwstream)) {
           GST_DEBUG_OBJECT (pool, "retrigger starved video driver");
           pw_stream_trigger_process (s->pwstream);
         }
         pw_thread_loop_unlock (s->core->loop);
+        if (!streaming) {
+          /* The consumer left while we waited (its link and buffers are
+           * gone). Do not hold this frame until the next link: it would go
+           * out first with a timestamp from before the gap, and live
+           * consumers then pace every later frame by that gap. */
+          GST_DEBUG_OBJECT (pool, "stream stopped streaming while starved; dropping frame");
+          return GST_PIPEWIRE_POOL_FLOW_DROP;
+        }
         GST_OBJECT_LOCK (pool);
       }
     } else {

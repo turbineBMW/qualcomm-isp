@@ -14,7 +14,7 @@ options=('!debug')
 build() {
   cd qualcomm-isp
   cc -O3 -fPIC -shared -Wall -Wextra runtime/pd10-fast.c -o runtime/pd10-fast.so
-  python tools/build-pipewire.py vendor/pipewire-gst bridge --version 1.6.9-icp-recovery-timestamps
+  python tools/build-pipewire.py vendor/pipewire-gst bridge --version 1.6.9-icp-recovery-timestamps-nolink
 }
 check() {
   cd qualcomm-isp/runtime

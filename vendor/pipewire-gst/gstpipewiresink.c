@@ -1054,6 +1054,11 @@ gst_pipewire_sink_render (GstBaseSink * bsink, GstBuffer * buffer)
           goto done;
         continue;
       }
+      if (res == GST_PIPEWIRE_POOL_FLOW_DROP) {
+        /* No consumer any more: discard this frame, keep upstream flowing. */
+        res = GST_FLOW_OK;
+        goto done;
+      }
       if (res != GST_FLOW_OK)
         goto done;
 
