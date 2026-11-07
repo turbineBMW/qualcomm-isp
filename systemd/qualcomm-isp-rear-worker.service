@@ -1,6 +1,6 @@
 [Unit]
 ConditionPathExists=/etc/qualcomm-isp/rear.json
-ConditionPathExists=/usr/share/doc/linux-omarchy-isp/build-artifacts.json
+ConditionPathExists=/usr/lib/modules/%v/qualcomm-isp-manifest.json
 Description=Qualcomm ISP rear camera worker (privileged session on demand)
 Requires=qualcomm-isp-rear-worker.socket
 After=qualcomm-isp-rear-worker.socket

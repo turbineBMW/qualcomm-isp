@@ -14,7 +14,8 @@ importing the recipe's public verification keys into your build user's
 keyring. The recipe preserves upstream source signatures. The adjacent README
 and upgrade notes originate in the pinned base recipe. The package writes the
 build manifest the runtime's preflight checks
-(`/usr/share/doc/linux-omarchy-isp/build-artifacts.json`).
+(`/usr/lib/modules/<release>/qualcomm-isp-manifest.json`); the runtime's units
+start only on a kernel that has one.
 
 Installing a kernel package is not a complete board boot setup. The tested
 Surface boot entry uses the Denali OLED DTB and `iommu.passthrough=0`, with the

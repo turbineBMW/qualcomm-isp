@@ -1,6 +1,6 @@
 [Unit]
 ConditionPathExists=/etc/qualcomm-isp/rear.json
-ConditionPathExists=/usr/share/doc/linux-omarchy-isp/build-artifacts.json
+ConditionPathExists=/usr/lib/modules/%v/qualcomm-isp-manifest.json
 Description=Qualcomm ISP rear camera node (PipeWire, starts the worker on demand)
 After=pipewire.service wireplumber.service
 Requires=pipewire.service

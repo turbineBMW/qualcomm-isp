@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Sat, 7 Nov 2026 11:10:00 -0500
+Subject: [PATCH] arm64: dts: qcom: x1e80100: do not let the ICP, BPS and IPE
+ hold sync_state
+
+The ICP, BPS and IPE nodes consume the camera clock controller, GCC and
+four interconnect providers. fw_devlink makes each of those wait in
+sync_state() until every consumer has a driver bound. Nothing binds the
+BPS and IPE nodes (only their IOMMU domains are used, by the ICP driver),
+and the ICP driver is loaded for a camera session and unloaded after it.
+So sync_state() never ran for camcc, mmss_noc and mc_virt:
+
+  qnoc-x1e80100 1780000.interconnect: sync_state() pending due to ac42000.ipe
+  camcc-x1e80100 ade0000.clock-controller: sync_state() pending due to ac2c000.bps
+
+The interconnect core drops its boot-time votes only once every provider
+has synced, so every NoC node stayed at INT_MAX and the SoC never
+collapsed CX or put DDR into self-refresh in suspend (qcom_stats cxsd,
+aosd and ddr stayed at Count: 0 through a 9.6 minute deep suspend).
+
+None of these nodes needs fw_devlink to order its probe: BPS and IPE have
+no driver, and the ICP driver loads long after boot. List the providers as
+post-init-providers so fw_devlink ignores those links.
+
+Validated on the Surface Pro 11 (Denali OLED): forcing sync_state on the
+three blocked providers dropped the NoC votes, and the next deep suspend
+reached CX, AOSS and DDR sleep for 563 s of 567 s.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm64/boot/dts/qcom/hamoa.dtsi | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/hamoa.dtsi b/arch/arm64/boot/dts/qcom/hamoa.dtsi
+index 2867922..2014d84 100644
+--- a/arch/arm64/boot/dts/qcom/hamoa.dtsi
++++ b/arch/arm64/boot/dts/qcom/hamoa.dtsi
+@@ -6010,6 +6010,8 @@
+ 						<&camcc CAM_CC_BPS_GDSC>,
+ 						<&camcc CAM_CC_IPE_0_GDSC>;
+ 				power-domain-names = "top", "bps", "ipe";
++				post-init-providers = <&camcc>, <&gcc>, <&config_noc>, <&gem_noc>,
++						      <&mc_virt>, <&mmss_noc>;
+ 
+ 				resets = <&camcc CAM_CC_ICP_BCR>,
+ 					 <&camcc CAM_CC_BPS_BCR>,
+@@ -6089,6 +6091,8 @@
+ 				interconnects = <&mmss_noc MASTER_CAMNOC_SF 0
+ 						 &mc_virt SLAVE_EBI1 0>;
+ 				interconnect-names = "mem";
++				post-init-providers = <&camcc>, <&gcc>, <&config_noc>, <&gem_noc>,
++						      <&mc_virt>, <&mmss_noc>;
+ 
+ 				ubwc-fetch-cfg = <0x7083>;
+ 				ubwc-write-cfg = <0x1620f>;
+@@ -6146,6 +6150,8 @@
+ 				interconnects = <&mmss_noc MASTER_CAMNOC_SF 0
+ 						 &mc_virt SLAVE_EBI1 0>;
+ 				interconnect-names = "mem";
++				post-init-providers = <&camcc>, <&gcc>, <&config_noc>, <&gem_noc>,
++						      <&mc_virt>, <&mmss_noc>;
+ 
+ 				ubwc-fetch-cfg = <0x7083>;
+ 				ubwc-write-cfg = <0x1620f>;
+-- 
+2.47.0
+

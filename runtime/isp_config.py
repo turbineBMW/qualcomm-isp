@@ -51,7 +51,8 @@ def preflight():
         raise ValueError('Board does not match the selected profile')
     if 'iommu.passthrough=0' not in Path('/proc/cmdline').read_text().split():
         raise ValueError('The qualified configuration requires iommu.passthrough=0')
-    manifest = json.loads(Path(profile['kernel_manifest']).read_text())
+    # The kernel package writes the manifest next to its modules: {release} is the running kernel.
+    manifest = json.loads(Path(profile['kernel_manifest'].format(release=os.uname().release)).read_text())
     if manifest['kernel_release'] != os.uname().release:
         raise ValueError('Kernel release does not match the camera build manifest')
     sensor_module = profile.get('sensor_module', 'imx681')

@@ -119,3 +119,24 @@ sensor or driver version is qualified by these results.
   regenerated from the SPDX identifiers in the 7.3 patch set.
 
 Camera suspend/resume, Snapshot and Chromium were not repeated on 7.3.
+
+## Patch 3369 and runtime 0.1-9 (2026-11-07)
+
+- With the ISP device tree, nothing binds the BPS and IPE nodes and the ICP
+  driver loads only for a camera session, so `sync_state()` never ran for the
+  camera clock controller and three interconnect providers. Every NoC kept its
+  boot-time vote, and a 9.6 minute deep suspend never collapsed CX, AOSS or DDR
+  (qcom_stats `Count: 0`). Forcing `sync_state` proved the cause (563 s of
+  567 s in CX/AOSS/DDR); patch 3369 lists those providers as
+  `post-init-providers` on the three nodes.
+- On `7.3.0-25.1-omarchy-isp` with 3369: no provider left unsynced after boot,
+  a 150-frame stream without SMMU faults, idle suspend 596.9 s of 601 s in
+  CX/AOSS/DDR, and a suspend while streaming (sleep hook stopped the session,
+  148 s of 152 s; the same consumer had frames again 8 s after the lid opened).
+- The same series, folded into the Surface Pro 11 `linux-omarchy` 7.3-25.2
+  (full build), booted with all providers synced; preflight, a 150-frame
+  stream, face unlock and a deep suspend with CX/AOSS/DDR collapse passed.
+  That build writes the manifest to `/usr/lib/modules/<release>/`, which
+  runtime `0.1-9` requires (units, profiles and preflight).
+- The kernel recipe here was updated to the same manifest location but was not
+  rebuilt with it.

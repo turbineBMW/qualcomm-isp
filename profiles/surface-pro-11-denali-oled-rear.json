@@ -12,17 +12,13 @@
   "node_name": "sp11-ipe-rear",
   "description": "Built-in Rear Camera (ISP)",
   "raw_node_name": "libcamera_input._base_soc_0_cci_ac15000_i2c-bus_1_camera_10",
-  "kernel_manifest": "/usr/share/doc/linux-omarchy-isp/build-artifacts.json",
+  "kernel_manifest": "/usr/lib/modules/{release}/qualcomm-isp-manifest.json",
   "program_bank": "bank",
   "ife_tuning": "ife.yaml",
   "awb_reference": "awb-reference.json",
   "sensor_module": "ov13858",
   "experimental_native_grbg": true,
   "nickname": "Rear Camera (ISP)",
-  "sensor_identity": {
-    "srcversion": "E72417CE64279B42E6591A4",
-    "vermagic": "7.3.0-25.1-omarchy-isp SMP preempt mod_unload modversions aarch64"
-  },
   "initial_controls": {
     "ExposureTime": 30003,
     "AnalogueGain": 2.0,
