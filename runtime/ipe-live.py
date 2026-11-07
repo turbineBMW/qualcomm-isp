@@ -14,6 +14,7 @@ import argparse
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import faulthandler
 import importlib.util
 import hashlib
 import json
@@ -33,6 +34,7 @@ HERE = Path(__file__).resolve().parent
 import sys
 sys.path.insert(0, str(HERE))
 import isp_config
+import proctree
 CONFIG, BOARD = isp_config.load()
 CAPTURE_USER = isp_config.identity()
 ASSETS = Path(CONFIG['assets'])
@@ -45,6 +47,26 @@ CONTROLS = dict(AeEnable=False, AwbEnable=False, ExposureTime=32878,
 CONTROLS.update(BOARD.get('initial_controls', {}))
 FIRST_SEQUENCE = 12   # startup frames before this are never processed
 FRESH_NS = 500_000_000
+STOP_GRACE = 15   # seconds from stop to finished cleanup; session.py waits 20
+
+
+def stop_watchdog(stop, cleaned):
+    """Make a stop win even if a pipeline stage or cleanup step blocks.
+
+    Dumps every thread's stack to the session log, kills the camera tree
+    (runuser -> cam -> IPA proxy, outside our process group) and exits, so
+    the kernel releases the ICP and capture descriptors and session.py can
+    unload ICP.
+    """
+    stop.wait()
+    if cleaned.wait(STOP_GRACE):
+        return
+    print(f'STOP WATCHDOG: cleanup not finished {STOP_GRACE} s after stop; dumping stacks, killing the camera, exiting',
+          file=sys.stderr, flush=True)
+    faulthandler.dump_traceback(all_threads=True)
+    killed = proctree.kill_tree(os.getpid(), include_root=False)
+    print(f'STOP WATCHDOG: killed {killed}', file=sys.stderr, flush=True)
+    os._exit(75)
 
 
 def limit_start_exposure(exposure, gain, slow_frame):
@@ -572,6 +594,10 @@ def main():
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
+    # `kill -USR1 <pid>` dumps every thread's stack into the session log.
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
+    cleaned = threading.Event()
+    threading.Thread(target=stop_watchdog, args=(stop, cleaned), name='stop-watchdog', daemon=True).start()
     session = capture = publisher = publish_log = handoff = transport = None
     prep_pool = read_pool = None
     report = dict(capture_transport=a.capture_transport, readback=a.readback, transport=a.transport, system_pipewire=a.system_pipewire,
@@ -840,6 +866,7 @@ def main():
             report['completed'] = False
         # Retained frames are a deque; an early failure reaches here before the success path lists them.
         (out/'report.json').write_text(json.dumps(report, indent=2, default=list)+'\n')
+        cleaned.set()
         if cleanup_errors:
             raise RuntimeError('Live cleanup failed: '+'; '.join(cleanup_errors))
 

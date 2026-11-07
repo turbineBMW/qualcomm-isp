@@ -9,8 +9,10 @@ One client at a time. Messages are JSON packets:
   {"type":"stop"}                                          -> stopped
   {"type":"status"}                                        -> status
 Closing the connection stops a running session. Each session is one
-run-ipe-session.sh invocation (ICP module load, ipe-live.py with
---handoff-fds, module unload and camera restoration on exit).
+session.py invocation (ICP module load, ipe-live.py with --handoff-fds,
+module unload and camera restoration on exit). Stop deadlines: ipe-live's
+watchdog 15 s, session.py's child grace 20 s, this daemon 45 s; only the
+last skips session.py's cleanup, so it unloads ICP itself.
 """
 import argparse
 import array
@@ -27,6 +29,8 @@ import threading
 import time
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import proctree
 
 
 def log(*parts):
@@ -66,19 +70,38 @@ class Session:
         return self.process.poll() is None
 
     def stop(self, timeout=45):
+        # SIGTERM only session.py: it forwards the stop to ipe-live, kills the
+        # session tree after its own grace and unloads ICP. Signalling the
+        # whole group raced that cleanup, and a group SIGKILL skipped it.
         if self.alive():
             try:
-                os.killpg(self.process.pid, signal.SIGTERM)
+                os.kill(self.process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
             try:
                 self.process.wait(timeout)
             except subprocess.TimeoutExpired:
-                log('session did not stop; killing')
-                os.killpg(self.process.pid, signal.SIGKILL)
+                log(f'session {self.dir.name} did not stop in {timeout} s; dumping stacks, killing its tree')
+                # Only our scripts dump stacks on SIGUSR1; it would kill cam/runuser.
+                for pid in [self.process.pid, *proctree.descendants(self.process.pid)]:
+                    if proctree.runs_script(pid, HERE):
+                        try:
+                            os.kill(pid, signal.SIGUSR1)
+                        except ProcessLookupError:
+                            pass
+                time.sleep(.5)
+                proctree.kill_tree(self.process.pid)
                 self.process.wait(10)
+                self.recover()
         self.log.close()
         return self.process.returncode
+
+    def recover(self, icp=Path('/sys/module/qcom_camss_icp')):
+        """session.py died before its cleanup: unload ICP so the next start works."""
+        if not icp.exists():
+            return
+        result = subprocess.run(['rmmod', 'qcom_camss_icp'], capture_output=True, text=True, timeout=30)
+        log(f'recovery rmmod qcom_camss_icp: exit {result.returncode} {result.stderr.strip()}'.rstrip())
 
     def tail(self, n=12):
         try:
