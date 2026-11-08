@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "status": "Source release; Surface Pro 11 Denali OLED capture, stop/cleanup, cold-boot and suspend (idle and streaming, CX/AOSS/DDR collapse) checks passed on 7.3.0-25.1-omarchy-isp 2026-11-07; other boards unqualified",
+  "status": "Source release; Surface Pro 11 Denali OLED capture, stop/cleanup, cold-boot and suspend checks passed 2026-11-07; 3370 (dedicated camera memory) under test; other boards unqualified",
   "base_recipe": {
     "url": "https://github.com/turbineBMW/surface-pro-11-omarchy/tree/213b706909b8165b1c25295c7eaaad2d8151864d/pkgbuilds/linux-omarchy-aarch64",
     "commit": "213b706909b8165b1c25295c7eaaad2d8151864d",
@@ -9,24 +9,24 @@
     "describes": "Omarchy linux-omarchy (aarch64) 7.3-25 as omarchy-pkgs#1698 77314411 (Omarchy 7.3-24 plus 2217), plus 2221 (DisplayPort audio) and the quiet-efivarfs initramfs hook"
   },
   "package": "linux-omarchy-isp",
-  "package_version": "7.3-25.1",
-  "kernel_release": "7.3.0-25.1-omarchy-isp",
+  "package_version": "7.3-25.2",
+  "kernel_release": "7.3.0-25.2-omarchy-isp",
   "isp_commit": "84ef6bd528015476a24aa380717c8434e7bbfa34",
   "recipe_changes": [
     "pkgbase and _kernel renamed to linux-omarchy-isp; no conflicts/replaces, installs next to linux-omarchy",
-    "ISP patches 3300-3368 appended to source=() (byte-identical to the 7.2.8-13.1 series 2300-2368, renumbered), plus 3369 (post-init-providers on the ICP/BPS/IPE nodes so sync_state runs)",
+    "ISP patches 3300-3368 appended to source=() (byte-identical to the 7.2.8-13.1 series 2300-2368, renumbered), plus 3369 (post-init-providers on the ICP/BPS/IPE nodes so sync_state runs) and 3370 (dedicated camera_icp_mem)",
     "config.aarch64: CONFIG_PHY_QCOM_MIPI_CSI2=m, CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP=m",
     "omarchy-isp-lab.conf installed as /usr/lib/modprobe.d/omarchy-isp-lab.conf (blacklists qcom_camss_icp)",
     "package() writes /usr/lib/modules/<release>/qualcomm-isp-manifest.json for the runtime preflight and unit conditions",
     "quiet-efivarfs hook sources left out (linux-omarchy owns the hook)"
   ],
-  "PKGBUILD_sha256": "e83fb6bb2dec5ca378348c72ee0b705afcb5ffcab1e72fab2e75e71269c1e57b",
+  "PKGBUILD_sha256": "ee835ad6fdb79dc608c10d0a9e502c4e028cddaecc0794100b3eb638ed416369",
   "config_sha256": "afb3b2c676bcbf48678ce95d4a1617185ddcf9a64851c53aebcf82d761e8d4be",
   "opt_in_config_sha256": "e47a439b00db2f5b9202b1b95d0c0e68ddd1a9c11529d32ca9480c8d23b2a2d3",
   "groups": [
     {
       "name": "isp-port",
-      "range": "3300..3369",
+      "range": "3300..3370",
       "patches": [
         {
           "file": "3300-media-qcom-camss-use-fwnode_graph_for_each_endpoint_.patch",
@@ -446,6 +446,12 @@
           "file": "3369-arm64-dts-qcom-x1e80100-do-not-let-the-ICP-BPS-and-IPE-ho.patch",
           "sha256": "92233ca967695fb7efc7cc6843ea4e867c86402b83cd27b569e74c8eb6681ab6",
           "subject": "arm64: dts: qcom: x1e80100: do not let the ICP, BPS and IPE hold sync_state",
+          "author": "Brandon Williams"
+        },
+        {
+          "file": "3370-media-qcom-camss-icp-keep-the-camera-memory-reserved-f.patch",
+          "sha256": "83a00cec4d595273e3a2181f3aa7d7cec552aade85f64e86d8b1e077ceeb27d8",
+          "subject": "media: qcom: camss: icp: keep the camera memory reserved from boot",
           "author": "Brandon Williams"
         }
       ]

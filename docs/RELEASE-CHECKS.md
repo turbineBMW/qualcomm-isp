@@ -140,3 +140,22 @@ Camera suspend/resume, Snapshot and Chromium were not repeated on 7.3.
   runtime `0.1-9` requires (units, profiles and preflight).
 - The kernel recipe here was updated to the same manifest location but was not
   rebuilt with it.
+
+## Patch 3370 and runtime 0.1-10 (2026-11-07)
+
+- After about 6 hours of uptime every camera session failed: the ICP's 140 MiB
+  HFI allocation from the reusable (CMA) camera_icp_mem region returned -EBUSY.
+  The region was 80% free; page isolation failed on unmapped, unevictable shmem
+  pages charged to the desktop session (traced with page_isolation events), and
+  dropping caches or compacting did not help.
+- 3370 makes the region a dedicated no-map pool (same 272 MiB) and carves the
+  HFI memory, its IPE/BPS mirror mappings and the lab buffers from it with a
+  gen_pool. First test faulted (IPE CDM read of the uncached HFI region, cb=9)
+  because the mirror still looked up the physical address through the DMA
+  API's mapping; fixed in the same patch.
+- On the Surface Pro 11 with the fixed module: MemTotal 272 MiB lower, the
+  driver reports the dedicated memory, a 150-frame stream ran without SMMU
+  faults, ICP unloaded afterwards. Long-uptime behaviour is the point of the
+  patch and still to be observed over a day of use.
+- Runtime 0.1-10 names the front node "Built-in Front Camera (ISP)", so apps
+  no longer show two cameras with the stock libcamera node's name.

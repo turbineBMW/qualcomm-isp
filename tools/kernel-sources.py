@@ -51,7 +51,7 @@ def main():
     p.add_argument('--base-version', required=True)
     p.add_argument('--base-describes', required=True, help='What the base recipe is, relative to Omarchy')
     p.add_argument('--isp-commit', required=True, help='Kernel commit the ISP patch bodies were exported from')
-    p.add_argument('--isp-range', default='3300-3369')
+    p.add_argument('--isp-range', default='3300-3370')
     p.add_argument('--change', action='append', default=[], help='One change to the base recipe (repeatable)')
     a = p.parse_args()
 
