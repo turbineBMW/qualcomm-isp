@@ -26,6 +26,7 @@
     "test-colour-selection.py": "Synthetic nested-reference and interpolation regression tests; no proprietary fixtures.",
     "slrun.c": "Added exact DLL hash enforcement and explicit extracted DS4 coefficients; retains observed ABI offsets and original loader/call code.",
     "other_helpers": "Portable imports/arguments and MIT SPDX notices; original calculation/packing logic retained.",
-    "prepare-early-colour.py": "Opt-in validated rear P010 bank conversion: exact source CCM moved before IFE gamma, late CCM unity, joint RAW highlight model required, all other programs preserved; generated owner assets remain local."
+    "prepare-early-colour.py": "Opt-in validated rear P010 bank conversion: exact source CCM moved before IFE gamma, late CCM unity, joint RAW highlight model required, all other programs preserved; generated owner assets remain local.",
+    "prepare-motion-bank.py": "Opt-in rear P010 early-color bank conversion: disables temporal-filter pass enables and regenerates full striping within the qualified scratch bound; preserves seed, spatial denoising, color, tone and sharpening. Generated owner assets remain local."
   }
 }

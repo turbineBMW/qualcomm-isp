@@ -1,5 +1,33 @@
 # Initial source publication checks
 
+## Rear motion rendering, runtime 0.1-16 (2026-11-08)
+
+- A moving hand and charger showed multiple old outlines after IPE processing
+  even at 16,653 us exposure. Replaying 25 identical ordered saved inputs with
+  independent seeds isolated temporal filtering: bypassing its pass enables
+  removed the outlines, at the expense of more visible grain. Sparse saved
+  inputs establish causality, not normal desktop ghosting magnitude.
+- The new opt-in rear preparation builds 625 validated entries from the P010
+  early-color bank. Only TF enables and full striping change; seed programs,
+  spatial ANR, CC/CV, tone, sharpening, IFE and AWB data are preserved. Scratch
+  requirements remain within 6 MiB. Factory motion-aware TF integration remains
+  unqualified; this bypass does not establish a defect in the factory algorithm.
+- Rear worker policy now keeps the nominal 1/30-second frame period instead of
+  extending toward 1/15 s. A 300-output automatic trial with the complete new
+  bank finished in 12.05 s, settling at 33,307 us and maximum reported analogue
+  gain. Final 60 weighted-luma values were 139.50–140.87 in warm indoor light.
+  Low-light noise and fast-subject blur remain; front policy is unchanged.
+- Runtime package checks passed 58 unit tests and six PD10 comparisons. After
+  installation, the desktop path delivered 90 frames at 3840x2160; the worker
+  report confirmed the new bank, slow-frame 1.0 and 33,307 us exposure.
+- Front/rear/front/cancelled-rear switching passed with first-image times
+  2.82/3.27/3.40/2.54 s. Package integrity reported runtime59/libcamera84 files,
+  zero altered. Both publishers and WirePlumber stayed active, ICP unloaded,
+  runtime usage returned to zero and no matching kernel faults were observed.
+- Runtime 0.1-16 and libcamera 0.7.2-7 are installed on the test machine, with
+  prior rear assets/configuration preserved for rollback. Generated owner
+  assets and reference photographs remain private. No new suspend test.
+
 ## Early rear color and exposure convergence, libcamera 0.7.2-7 (2026-11-08)
 
 - Joint rear RAW samples model the pre-gamma color matrix's highlight envelope,
