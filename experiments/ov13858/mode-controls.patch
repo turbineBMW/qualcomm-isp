@@ -1,0 +1,29 @@
+From: Brandon Williams <turbine.bmw@gmail.com>
+Subject: [PATCH] camss: refresh blanking limits after changing the sensor mode
+
+The inline pipeline is constructed before the capture mode is configured.
+Its cached vertical blanking default can therefore belong to a different
+mode left by a previous client. On OV13858, the 1056x784 mode has a default
+blanking of 2430 lines, while 4224x3136 needs only 78. Reusing 2430 in the
+full-resolution mode makes auto-exposure extend frames to about 115 ms,
+outside the IPE runtime's qualified 67 ms metadata envelope.
+
+CameraSensor::setFormat updates the control information. Read the blanking
+range and default from that refreshed map before deriving the full-rate
+exposure limit and initializing the sensor controls.
+
+diff --git a/src/libcamera/pipeline/camss/camss_isp_inline.cpp b/src/libcamera/pipeline/camss/camss_isp_inline.cpp
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.cpp
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.cpp
+@@ -700,6 +700,11 @@ int CamssIspInline::configure(const StreamConfiguration &inputCfg,
+ 	static const uint32_t ids[] = { V4L2_CID_VBLANK };
+ 	ControlList cur = sensor->getControls(ids);
+ 	const ControlInfoMap &ctrls = sensor->controls();
++	const ControlInfo &vblank = ctrls.at(V4L2_CID_VBLANK);
++	vblankMin_ = vblank.min().get<int32_t>();
++	vblankMax_ = vblank.max().get<int32_t>();
++	vblankDef_ = vblank.def().get<int32_t>();
++
+ 	int32_t vblankCur = cur.contains(V4L2_CID_VBLANK) ? cur.get(V4L2_CID_VBLANK).get<int32_t>() : vblankDef_;
+ 	int32_t exposureMaxCur = ctrls.find(V4L2_CID_EXPOSURE)->second.max().get<int32_t>();
+ 

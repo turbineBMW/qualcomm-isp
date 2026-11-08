@@ -75,6 +75,16 @@ struct _GstPipeWireSink {
 
   GstPipeWireSinkMode mode;
   GstPipeWireSinkSlaveMethod slave_method;
+
+  /* Formats advertised to PipeWire instead of the single negotiated caps
+   * (NULL = upstream behaviour). Every structure must be fixed. */
+  GstCaps *formats;
+  /* The advertised format PipeWire picked for its peers; NULL until a peer
+   * negotiated (and again once the format is cleared). Protected by the
+   * object lock. */
+  GstCaps *current_format;
+  /* The raw video caps negotiated on our sink pad. */
+  GstVideoInfo in_info;
 };
 
 GType gst_pipewire_sink_mode_get_type (void);

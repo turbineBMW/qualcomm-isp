@@ -171,7 +171,8 @@ def serve(conn, args, state, stopping):
                 else:
                     rc = session.stop()
                     log(f'session {session.dir.name} failed to start (exit {rc})')
-                    reply(conn, type='failed', error=f'session exited {rc}' if rc is not None else 'start timeout',
+                    reply(conn, type='busy' if rc == os.EX_TEMPFAIL else 'failed',
+                          error=f'session exited {rc}' if rc is not None else 'start timeout',
                           log=session.tail())
                     session = None
             elif kind == 'stop':

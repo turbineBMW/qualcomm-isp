@@ -132,10 +132,14 @@ start) `qualcomm-isp-sleep.service`. Enable/start the user
 `qualcomm-isp-publisher.service`. Use the machine's approved elevation mechanism
 for system units. The sleep service runs automatically around sleep.
 
-The node is `sp11-ipe-preview`, displayed as **Built-in Front Camera**, preserving
-the existing desktop camera identity. After confirming it works, a WirePlumber
-rule can hide the raw node named in the board profile. The kernel sensor must
-remain enabled for the ISP worker. The existing local SP11 rule already does this.
+The node is `sp11-ipe-preview`, displayed as **Built-in Front Camera (ISP)**.
+Runtime `0.1-12` includes a WirePlumber policy that hides the matching software
+libcamera node while the ISP publisher is present. Close camera/audio clients
+and restart WirePlumber once after installing the policy; later publisher
+starts and stops update routing automatically. Remove any old, unconditional
+duplicate-hiding rule if you want fallback to return when ISP is unavailable.
+The kernel sensor remains enabled for the ISP worker. See
+[desktop routing](PUBLISHER.md#desktop-camera-routing) for scope and checks.
 
 ## Verify and recover
 
@@ -146,14 +150,15 @@ and both idle and active-camera suspend/resume after deployment.
 
 To roll back, close camera applications, stop/disable the new user publisher
 and system socket/sleep service, stop the new worker, and re-enable the old
-stack. Restore the original WirePlumber camera entry if booting a kernel that
-has no ISP support. The previous runtime, packages and boot entries remain
+stack. With runtime `0.1-12`, the original WirePlumber camera entry returns
+automatically when its ISP publisher disappears, including on a kernel without
+ISP support. The previous runtime, packages and boot entries remain
 available during this migration.
 
 ## Experimental OV13858 rear ISP
 
 The rear path has been tested on this Denali OLED with the existing qualified
-lab kernel. It requires private libcamera package `0.7.2-4` and runtime `0.1-7`
+lab kernel. Use private libcamera package `0.7.2-5` and runtime `0.1-13`
 or later. It uses the kernel's temporary native-GRBG register override, restored
 when the session ends; the source CSID fix still needs a kernel build and boot
 qualification. See [the experiment](../experiments/ov13858/README.md) for input
@@ -172,18 +177,21 @@ Enable `qualcomm-isp-rear-worker.socket` in the system manager and
 `qualcomm-isp-rear-publisher.service` in the user manager. Desktop applications
 then see **Built-in Rear Camera (ISP)**. The two ISP workers share an exclusive
 hardware lock: close the previous camera stream before selecting the other.
-The five-second idle grace period plus retry can make switching take roughly
-seven to twelve seconds. Simultaneous front/rear capture is not supported.
+Runtime `0.1-13` bypasses the five-second idle grace when the other ISP route is
+requested and retries a busy hardware lock after one second. Switching still
+needs sensor/ISP startup (roughly two to four seconds in the tested Gaze run).
+Simultaneous front/rear capture is not supported.
 
-To hide the duplicate software rear-camera entry, add a WirePlumber rule matching
-`node.name = "libcamera_input._base_soc_0_cci_ac15000_i2c-bus_1_camera_10"` with
-`actions = { update-props = { node.disabled = true } }`, following the existing
-front-camera rule. Restart WirePlumber after closing camera clients. This only
-hides its desktop entry; the private worker can still open the sensor.
+The packaged WirePlumber policy hides the duplicate software rear entry only
+while the rear ISP publisher is present, independently of the front publisher.
+The private libcamera mode-control fix refreshes the sensor's blanking defaults
+after changing resolution. Without it, a previous 1056x784 session could leave
+the full-resolution rear exposure limit at 115 ms, exceeding the runtime's
+qualified 67 ms envelope and causing repeated capture timeouts.
 
 Rollback: close clients, disable the rear user publisher and system socket,
-stop the rear worker service, remove the duplicate-hiding rule and restart
-WirePlumber. Keep the local tuning assets if you intend to retry. Front capture
+stop the rear worker service. The rear fallback entry returns automatically.
+Keep the local tuning assets if you intend to retry. Front capture
 has its own configuration, warm-start state and capture directory.
 
 The sleep hook now quiesces both workers and restores exactly the previously

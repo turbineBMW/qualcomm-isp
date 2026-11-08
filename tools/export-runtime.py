@@ -11,11 +11,11 @@ root = Path(__file__).resolve().parents[1]
 destination = root/'packaging/runtime/qualcomm-isp-runtime.tar.gz'
 destination.parent.mkdir(exist_ok=True)
 paths = []
-for directory in ('runtime', 'profiles', 'systemd', 'vendor/pipewire-gst'):
+for directory in ('runtime', 'profiles', 'systemd', 'vendor/pipewire-gst', 'wireplumber'):
     for path in sorted((root/directory).iterdir()):
-        if path.is_file() and (path.suffix in ('.py', '.c', '.h', '.json', '.socket', '.service') or path.name == 'COPYING'):
+        if path.is_file() and (path.suffix in ('.py', '.c', '.h', '.json', '.socket', '.service', '.lua', '.conf') or path.name == 'COPYING'):
             paths.append(path)
-paths.extend(root/name for name in ('tools/build-pipewire.py', 'packaging/config.json', 'docs/PROVENANCE.md', 'docs/FIRMWARE-EXTRACTOR.md', 'docs/PREPARE-BOARD-DATA.md', 'docs/INSTALL.md', 'LICENSE', 'LICENSES/MIT.txt'))
+paths.extend(root/name for name in ('tools/build-pipewire.py', 'packaging/config.json', 'docs/PROVENANCE.md', 'docs/FIRMWARE-EXTRACTOR.md', 'docs/PREPARE-BOARD-DATA.md', 'docs/INSTALL.md', 'docs/PUBLISHER.md', 'LICENSE', 'LICENSES/MIT.txt'))
 with destination.open('wb') as output, gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed, tarfile.open(fileobj=compressed, mode='w') as archive:
     for path in sorted(paths):
         info = archive.gettarinfo(str(path), arcname='qualcomm-isp/'+str(path.relative_to(root)))

@@ -13,6 +13,8 @@ Rear OV13858 now has [experimental 4K ISP desktop capture](experiments/ov13858/R
 with RAW-driven automatic exposure and white balance. The packages include an
 optional rear profile and publisher; front/rear switching has passed on this
 machine. Rear lighting, colour and suspend/resume qualification remain open.
+Runtime `0.1-12` prefers each available ISP publisher in PipeWire camera pickers
+and automatically restores its software libcamera entry when the publisher stops.
 
 **Firmware and IPE program/tuning data are not included.** The preparation
 workflow generates Surface board data from two locally supplied, version-checked
@@ -32,6 +34,8 @@ developers can begin source review, platform inventory and staged bring-up.
   package, offline generation and comparison with the accepted Surface assets.
 - [Source provenance and licenses](docs/PROVENANCE.md): origins, source hashes,
   retained attribution and excluded data.
+- [Publisher formats and recovery](docs/PUBLISHER.md): desktop resolutions,
+  error handling, synthetic tests and the concurrent-client limitation.
 - [Kernel source manifest](packaging/kernel/ISP-SOURCES.json): pinned Omarchy
   recipe and ordered Surface/ISP patch groups.
 
