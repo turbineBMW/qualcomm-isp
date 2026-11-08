@@ -24,9 +24,18 @@
 - Installed desktop capture delivered 90 frames at 3840x2160. Both publishers
   and WirePlumber were active afterward; ICP unloaded, runtime usage zero and
   temporary Bayer override empty. No matching kernel faults in the interval.
-- Runtime remains 0.1-15; no kernel, Gaze or sharpening change. Warm/mixed light
-  and a new suspend cycle remain unqualified. See the
+- Runtime remains 0.1-15; no kernel, Gaze or sharpening change. Additional lighting
+  conditions and a new suspend cycle remain unqualified. See the
   [model, evidence and rollback](../experiments/colour/README.md).
+
+Warm overhead follow-up: 300 diagnostic outputs passed. Final 90 frames held
+exposure at 64,318 us/gain8; output-luma spread was below 0.5%, with stable WB.
+Both saved RAW histograms matched. The desktop path delivered 180 native-4K
+frames; its centre-priority policy used about 1/15 s and gain18.38. A fixed-control
+pair compared the existing early matrix to the factory 4100 K region without a
+clear overall win, so the installed profile stayed unchanged. Whites looked
+near neutral; red remained pinker and fabric texture softer than the phone.
+This qualifies one warm overhead scene, not all spectra, mains flicker or motion.
 
 ## Rear denoising precision, runtime 0.1-15 (2026-11-08)
 
