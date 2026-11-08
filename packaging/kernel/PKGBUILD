@@ -9,7 +9,7 @@
 pkgbase=linux-omarchy-isp
 _kernel=linux-omarchy-isp
 pkgver=7.3
-pkgrel=25.1
+pkgrel=25.2
 # NVIDIA's open kernel modules ship prebuilt as $_kernel-nvidia-open, built in
 # this recipe so every kernel lands with modules for it and nobody compiles
 # them through DKMS on a kernel update. Keep this version and the patches in
@@ -576,6 +576,7 @@ source=(
   3367-media-camss-icp-import-the-validated-DMA-mapping-and.patch
   3368-media-camss-import-the-validated-C-PHY-clock-and-pai.patch
   3369-arm64-dts-qcom-x1e80100-do-not-let-the-ICP-BPS-and-IPE-ho.patch
+  3370-media-qcom-camss-icp-keep-the-camera-memory-reserved-f.patch
   x1p42100-acer-aspire-14-ai.json
   x1p42100-acer-aspire-16-ai.json
   x1p42100-microsoft-surface-pro-12in.json
@@ -1201,6 +1202,7 @@ sha256sums=('87363c24f10e06321eb362765521094e94471f6bff8bce2d6b3e40f39f004953'
             '5d5c4b6e0d713e45a5393f2ca5c4045d0f353a0731693cf17ca09e2c647ce9fa'
             '021ddb31f3bc3e21d0820d92ccade35a34e6f6a7d660191f68418f69da731133'
             '92233ca967695fb7efc7cc6843ea4e867c86402b83cd27b569e74c8eb6681ab6'
+            '1b3ab33357813f102a2108b0c59af0000d79e2e804d47f38fb85dc5109dc3d56'
             '726d29ea34b625a5e7231e608153eed6401aaf759020a31bcabb6e205601e0e9'
             'ef79637ecae1b3738a60988f4f434c4696f7ca80e12f91302dc0d55b514dd3ca'
             '74e289f2b3c057c84fb7755c16e2b7089994ffbb48d0da7af7363022ee06ebc8'
@@ -1817,6 +1819,7 @@ b2sums=('b7fb8c74de664fdd0cd7b42afff2720bda5c4bdb2ffffa80a745c5fecd029c6fe739a3e
         'b8b8f636186e49d0074b612c61412281961a829da82775fb687f05afcd81f3bb1801af8bb69b31058291a7fae60ca885ebdf238d2f6be19c916532a0574f2181'
         '855db4933e04969508854dd9e3ef7dc65db3815c872eda3f6df3ac27816a37448976c701e95ef4abcf9396f9589ed31af567df63700b408b9e888f5451f42c66'
         '627f8e7f64f9cdd044c79738b12be5c19c84d32b311b558908072daf69e88b5b6f1b146aa5ef6fd3e76c44e4ab6df1bbc406ab8985811c1b47a46bab6bfa0f4f'
+        '1fdcbec1c90c18f9c1ac9d3422afc400daa21949c102b2fc766b8860883a421ccc5cbeb4c8e4dd8618ff01a5c5c0af6b279474da1a1dccb0bc7160812f472f3b'
         'de18a3f607bc3df73356b8a1ef3d0daab22ae58c0b2400f1a78b73144edbb955454624a912c05474147659c2933a8739e28f1575692ce6c6622edc14f4bfd721'
         '6c718ba21c5326ead3de5de70d7bae549aa25ce0f8e226bf77d87f2f8a92829efbeec1774c0968b8f9e5dddccb58055321603f03cfaaf261d6117f6892042b09'
         '097c1af32a9d00846ffedbf6ba97b0e70917ffc692f89f751f1cbdf9a52973b98cdbf71f2ea9e0cf32bb62025fa31b0db4ce974b532faa76fe5c81252070d0dd'

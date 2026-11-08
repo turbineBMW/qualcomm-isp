@@ -2,7 +2,7 @@
 
 This directory is the Surface Pro 11 `linux-omarchy` recipe for aarch64
 (7.3-25.1, pinned in [ISP-SOURCES.json](ISP-SOURCES.json)) built as
-`linux-omarchy-isp`, with the 70 CAMSS/CSI2-PHY/ICP patches numbered 3300-3369.
+`linux-omarchy-isp`, with the 71 CAMSS/CSI2-PHY/ICP patches numbered 3300-3370.
 It installs next to `linux-omarchy` and replaces nothing. Only the Surface
 Pro 11 Denali OLED ISP result is qualified by this project.
 
@@ -10,10 +10,10 @@ What differs from the base recipe:
 
 - `pkgbase`/`_kernel` are `linux-omarchy-isp`; the package neither conflicts
   with nor replaces `linux-omarchy` or the old `linux-omarchy-n1x` names.
-- Patches 3300-3369 (`isp-port` in `ISP-SOURCES.json`). 25 are upstream-track
+- Patches 3300-3370 (`isp-port` in `ISP-SOURCES.json`). 25 are upstream-track
   patches by their original authors (Bryan O'Donoghue's CSI2 PHY, CAMSS and ICP
   series, Loic Poulain, Hans de Goede, Frank Li, Hitesh Patel, Nihal Kumar
-  Gupta); 45 are this project's. The four `LAB:` patches (3360, 3362-3364)
+  Gupta); 46 are this project's. The four `LAB:` patches (3360, 3362-3364)
   expose a raw HFI debugfs interface for the userspace runtime and are not
   meant for upstream.
 - `CONFIG_PHY_QCOM_MIPI_CSI2=m` and `CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP=m`.
@@ -27,6 +27,11 @@ What differs from the base recipe:
   providers as `post-init-providers`. Without it, nothing binds BPS and IPE,
   `sync_state()` never runs for those providers, every NoC keeps its boot-time
   vote and suspend never collapses CX or puts DDR into self-refresh.
+- 3370 (ours) makes `camera_icp_mem` a dedicated `no-map` region (272 MiB,
+  reserved from boot) and carves the ICP's HFI and lab buffers from it. As a
+  reusable (CMA) region it was lent to movable pages while the camera was off,
+  and after a few hours of desktop use unmovable pages in it made the ICP's
+  140 MiB allocation fail, so the camera stopped starting.
 - No quiet-efivarfs initramfs hook: `linux-omarchy` owns it.
 
 `tools/kernel-sources.py` regenerates `ISP-SOURCES.json` after a rebase. The

@@ -10,7 +10,7 @@
   "firmware": "qcom/x1e80100/microsoft/Denali/CAMERA_ICP.mbn",
   "icp_device": "ac01000.icp",
   "node_name": "sp11-ipe-preview",
-  "description": "Built-in Front Camera",
+  "description": "Built-in Front Camera (ISP)",
   "raw_node_name": "libcamera_input._base_soc_0_cci_ac16000_i2c-bus_1_camera_1a",
   "kernel_manifest": "/usr/lib/modules/{release}/qualcomm-isp-manifest.json",
   "program_bank": "bank",

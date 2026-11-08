@@ -1,0 +1,274 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <turbine.bmw@gmail.com>
+Date: Sat, 7 Nov 2026 19:40:00 -0500
+Subject: [PATCH] media: qcom: camss: icp: keep the camera memory reserved from
+ boot
+
+camera_icp_mem was a reusable (CMA) region: while the camera is off the
+kernel lends it to movable pages. The ICP then allocates its 140 MiB HFI
+block from it with DMA_ATTR_FORCE_CONTIGUOUS. After a few hours of desktop
+use, pages that had become unmovable sat in every possible window and the
+allocation failed, so the ICP never started:
+
+  cma: __cma_alloc_frozen: camera_icp_mem: alloc failed, req-size: 35840 pages, ret: -16
+  camss-icp ac01000.icp: probe with driver camss-icp failed with error -12
+
+The region was 80% free; page isolation failed on unmapped, unevictable
+shmem pages charged to the desktop session, and dropping caches or
+compacting did not help.
+
+Make camera_icp_mem a dedicated no-map region of the same size and carve
+the HFI memory and the lab buffers from it with a gen_pool. Both paths
+already map the memory at their own IOVAs with iommu_map(), and the HFI
+regions are mirrored into the IPE/BPS domains; all of them now take the
+physical address from the pool instead of from the DMA API's mapping.
+The CPU mapping is write-combined, as dma_alloc_attrs() gave this
+non-coherent device before; lab buffers are mmapped with remap_pfn_range().
+A reusable region still takes the DMA API path. The 272 MiB are now
+reserved for the camera permanently.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+diff --git a/arch/arm64/boot/dts/qcom/hamoa.dtsi b/arch/arm64/boot/dts/qcom/hamoa.dtsi
+index 2014d84..ed812fd 100644
+--- a/arch/arm64/boot/dts/qcom/hamoa.dtsi
++++ b/arch/arm64/boot/dts/qcom/hamoa.dtsi
+@@ -691,7 +691,7 @@
+ 
+ 		camera_icp_mem: camera_icp_mem {
+ 			compatible = "shared-dma-pool";
+-			reusable;
++			no-map;
+ 			size = <0x0 0x11000000>;
+ 			alignment = <0x0 0x00100000>;
+ 		};
+diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
+index f0394b4..9b6892d 100644
+--- a/drivers/media/platform/qcom/camss/camss-icp-hfi.c
++++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
+@@ -8,6 +8,7 @@
+  * kernel driver, cam_icp/hfi.c): three ring buffers of 32-bit words, the
+  * host writes the command queue and reads the message and debug queues.
+  */
++#include <linux/genalloc.h>
+ #include <linux/delay.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/io.h>
+@@ -60,22 +61,35 @@ static int hfi_alloc(struct icp_hfi *hfi, struct icp_hfi_mem_region *r, size_t s
+ 	phys_addr_t phys;
+ 	int ret;
+ 
+-	r->vaddr = dma_alloc_attrs(hfi->dev, size, &r->alloc_addr, GFP_KERNEL,
+-				   DMA_ATTR_FORCE_CONTIGUOUS);
+-	if (!r->vaddr)
+-		return -ENOMEM;
++	if (hfi->pool) {
++		/* Dedicated region: alloc_addr is the physical address. */
++		if (!fixed || !dom)
++			return -EINVAL;
++		r->vaddr = gen_pool_dma_zalloc_align(hfi->pool, size, &r->alloc_addr, SZ_1M);
++		if (!r->vaddr)
++			return -ENOMEM;
++		phys = r->alloc_addr;
++	} else {
++		r->vaddr = dma_alloc_attrs(hfi->dev, size, &r->alloc_addr, GFP_KERNEL,
++					   DMA_ATTR_FORCE_CONTIGUOUS);
++		if (!r->vaddr)
++			return -ENOMEM;
++		memset(r->vaddr, 0, size);
++		phys = (fixed && dom) ? iommu_iova_to_phys(dom, r->alloc_addr) : 0;
++	}
+ 	r->size = size;
+ 	r->dma_addr = r->alloc_addr;
+-	memset(r->vaddr, 0, size);
+ 
+ 	if (!fixed || !dom)
+ 		return 0;
+-	phys = iommu_iova_to_phys(dom, r->alloc_addr);
+ 	ret = phys ? iommu_map(dom, fixed, phys, size, IOMMU_READ | IOMMU_WRITE, GFP_KERNEL)
+ 		   : -EFAULT;
+ 	if (ret) {
+ 		dev_err(hfi->dev, "HFI: cannot map %zu bytes at %pad: %d\n", size, &fixed, ret);
+-		dma_free_attrs(hfi->dev, size, r->vaddr, r->alloc_addr, DMA_ATTR_FORCE_CONTIGUOUS);
++		if (hfi->pool)
++			gen_pool_free(hfi->pool, (unsigned long)r->vaddr, size);
++		else
++			dma_free_attrs(hfi->dev, size, r->vaddr, r->alloc_addr, DMA_ATTR_FORCE_CONTIGUOUS);
+ 		r->vaddr = NULL;
+ 		return ret;
+ 	}
+@@ -91,7 +105,10 @@ static void hfi_free(struct icp_hfi *hfi, struct icp_hfi_mem_region *r)
+ 		return;
+ 	if (r->dma_addr != r->alloc_addr && dom)
+ 		iommu_unmap(dom, r->dma_addr, r->size);
+-	dma_free_attrs(hfi->dev, r->size, r->vaddr, r->alloc_addr, DMA_ATTR_FORCE_CONTIGUOUS);
++	if (hfi->pool)
++		gen_pool_free(hfi->pool, (unsigned long)r->vaddr, r->size);
++	else
++		dma_free_attrs(hfi->dev, r->size, r->vaddr, r->alloc_addr, DMA_ATTR_FORCE_CONTIGUOUS);
+ 	r->vaddr = NULL;
+ }
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.h b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
+index 3d7a3aa..52c4818 100644
+--- a/drivers/media/platform/qcom/camss/camss-icp-hfi.h
++++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
+@@ -239,8 +239,11 @@ struct icp_hfi_ops {
+ 	void (*raise_irq)(void *priv);
+ };
+ 
++struct gen_pool;
++
+ struct icp_hfi {
+ 	struct device *dev;
++	struct gen_pool *pool;		/* dedicated reserved region, or NULL */
+ 	struct icp_hfi_mem hfi_mem;
+ 	const struct hfi_resources *res;
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
+index c880965..5df2041 100644
+--- a/drivers/media/platform/qcom/camss/camss-icp.c
++++ b/drivers/media/platform/qcom/camss/camss-icp.c
+@@ -27,6 +27,7 @@
+ #include <linux/string.h>
+ #include <linux/debugfs.h>
+ #include <linux/vmalloc.h>
++#include <linux/genalloc.h>
+ #include <linux/of_platform.h>
+ #include <linux/uaccess.h>
+ 
+@@ -115,9 +116,12 @@ struct camss_icp {
+ 		struct device *dev;
+ 		void *vaddr;
+ 		dma_addr_t iova;	/* fixed address, inside IO region 1 */
+-		dma_addr_t alloc_iova;	/* the DMA API's own mapping */
++		dma_addr_t alloc_iova;	/* the DMA API's own mapping, or the pool's physical address */
+ 		size_t size;
++		struct gen_pool *pool;	/* allocated from icp->pool */
+ 	} lab_buf[16];
++	/* Dedicated (no-map) camera_icp_mem, carved for the HFI and lab buffers */
++	struct gen_pool *pool;
+ 	dma_addr_t lab_next;
+ 	/* IPE/BPS DMA goes through their own SMMU streams: mirror lab buffers there */
+ 	struct iommu_domain *lab_mirror[2];
+@@ -684,8 +688,19 @@ static int icp_lab_buf_mmap(struct file *f, struct vm_area_struct *vma)
+ 		return ret;
+ 	vm_flags_clear(vma, VM_MAYWRITE | VM_MAYEXEC);
+ 	vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP);
+-	ret = dma_mmap_attrs(b->dev, vma, b->vaddr, b->alloc_iova,
+-			     b->size, DMA_ATTR_FORCE_CONTIGUOUS);
++	if (b->pool) {
++		unsigned long len = vma->vm_end - vma->vm_start;
++
++		if ((vma->vm_pgoff << PAGE_SHIFT) + len > b->size)
++			ret = -EINVAL;
++		else
++			ret = remap_pfn_range(vma, vma->vm_start,
++					      PHYS_PFN(b->alloc_iova) + vma->vm_pgoff, len,
++					      pgprot_writecombine(vma->vm_page_prot));
++	} else {
++		ret = dma_mmap_attrs(b->dev, vma, b->vaddr, b->alloc_iova,
++				     b->size, DMA_ATTR_FORCE_CONTIGUOUS);
++	}
+ 	debugfs_file_put(f->f_path.dentry);
+ 	return ret;
+ }
+@@ -720,11 +735,18 @@ static ssize_t icp_lab_alloc_write(struct file *f, const char __user *ubuf,
+ 	}
+ 	if (b) {
+ 		size = PAGE_ALIGN(size);
+-		b->vaddr = dma_alloc_attrs(icp->dev, size, &b->alloc_iova, GFP_KERNEL,
+-					   DMA_ATTR_FORCE_CONTIGUOUS);
++		if (icp->pool) {
++			b->vaddr = gen_pool_dma_zalloc_align(icp->pool, size, &b->alloc_iova, SZ_1M);
++			b->pool = b->vaddr ? icp->pool : NULL;
++		} else {
++			b->vaddr = dma_alloc_attrs(icp->dev, size, &b->alloc_iova, GFP_KERNEL,
++						   DMA_ATTR_FORCE_CONTIGUOUS);
++			b->pool = NULL;
++		}
+ 		if (b->vaddr) {
+ 			struct iommu_domain *own = iommu_get_domain_for_dev(icp->dev);
+-			phys_addr_t phys = own ? iommu_iova_to_phys(own, b->alloc_iova) : 0;
++			phys_addr_t phys = b->pool ? b->alloc_iova :
++					   own ? iommu_iova_to_phys(own, b->alloc_iova) : 0;
+ 			int m;
+ 			struct dentry *map;
+ 
+@@ -838,7 +860,8 @@ static void icp_lab_init(struct camss_icp *icp)
+ 
+ 		if (!reg->vaddr || !reg->dma_addr)
+ 			continue;
+-		phys = iommu_iova_to_phys(own, reg->alloc_addr);
++		/* A pool region's alloc_addr is already the physical address. */
++		phys = icp->pool ? reg->alloc_addr : iommu_iova_to_phys(own, reg->alloc_addr);
+ 		if (!phys)
+ 			continue;
+ 		for (m = 0; m < ARRAY_SIZE(icp->lab_mirror); m++) {
+@@ -904,10 +927,46 @@ static void icp_lab_exit(struct camss_icp *icp)
+ 				iommu_unmap(icp->lab_mirror[m], b->iova, b->size);
+ 		if (iommu_get_domain_for_dev(icp->dev))
+ 			iommu_unmap(iommu_get_domain_for_dev(icp->dev), b->iova, b->size);
+-		dma_free_attrs(icp->dev, b->size, b->vaddr, b->alloc_iova, DMA_ATTR_FORCE_CONTIGUOUS);
++		if (b->pool)
++			gen_pool_free(b->pool, (unsigned long)b->vaddr, b->size);
++		else
++			dma_free_attrs(icp->dev, b->size, b->vaddr, b->alloc_iova,
++				       DMA_ATTR_FORCE_CONTIGUOUS);
+ 	}
+ }
+ 
++/*
++ * camera_icp_mem as a dedicated no-map region: the 140 MiB HFI block and the
++ * lab buffers always fit, however long the system has been up. As a reusable
++ * (CMA) region it is lent to movable pages while the camera is off, and pages
++ * that later become unmovable there make the allocation fail with -EBUSY.
++ * Returns 0 when the pool is set up, 1 when the region is not dedicated.
++ */
++static int icp_pool_init(struct camss_icp *icp)
++{
++	struct device_node *np = of_parse_phandle(icp->dev->of_node, "memory-region", 1);
++	struct reserved_mem *rmem = np ? of_reserved_mem_lookup(np) : NULL;
++	bool dedicated = np && of_property_read_bool(np, "no-map");
++	void *vaddr;
++	int ret;
++
++	of_node_put(np);
++	if (!rmem || !dedicated)
++		return 1;
++	vaddr = devm_memremap(icp->dev, rmem->base, rmem->size, MEMREMAP_WC);
++	if (IS_ERR(vaddr))
++		return PTR_ERR(vaddr);
++	icp->pool = devm_gen_pool_create(icp->dev, PAGE_SHIFT, -1, "camss-icp");
++	if (IS_ERR(icp->pool))
++		return PTR_ERR(icp->pool);
++	ret = gen_pool_add_virt(icp->pool, (unsigned long)vaddr, rmem->base, rmem->size, -1);
++	if (ret)
++		return ret;
++	icp->hfi.pool = icp->pool;
++	dev_info(icp->dev, "dedicated camera memory %pa, %pa bytes\n", &rmem->base, &rmem->size);
++	return 0;
++}
++
+ static int camss_icp_probe(struct platform_device *pdev)
+ {
+ 	struct dev_pm_domain_attach_data pd_data = { .pd_flags = PD_FLAG_DEV_LINK_ON };
+@@ -945,8 +1004,13 @@ static int camss_icp_probe(struct platform_device *pdev)
+ 	if (icp->irq < 0)
+ 		return icp->irq;
+ 
+-	/* Reserved memory for HFI */
+-	ret = of_reserved_mem_device_init_by_idx(&pdev->dev, pdev->dev.of_node, 1);
++	/* Reserved memory for HFI: a dedicated pool, or the DMA API on a CMA region */
++	ret = icp_pool_init(icp);
++	if (ret < 0) {
++		dev_err(&pdev->dev, "Failed to set up the dedicated camera memory: %d\n", ret);
++		return ret;
++	}
++	ret = ret ? of_reserved_mem_device_init_by_idx(&pdev->dev, pdev->dev.of_node, 1) : 0;
+ 	if (ret && ret != -ENODEV) {
+ 		dev_err(&pdev->dev, "Failed to init reserved memory: %d\n", ret);
+ 		return ret;
+-- 
+2.47.0
+
