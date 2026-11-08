@@ -13,6 +13,12 @@ SPDX-FileCopyrightText = ["2026 Brandon Williams <turbine.bmw@gmail.com>", "The 
 SPDX-License-Identifier = "LGPL-2.1-or-later"
 
 [[annotations]]
+path = "experiments/ov13858/mode-controls.patch"
+precedence = "override"
+SPDX-FileCopyrightText = ["2026 Brandon Williams <turbine.bmw@gmail.com>", "The libcamera contributors; retained source notices apply"]
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+[[annotations]]
 path = "experiments/ov13858/csid-native-bayer.patch"
 precedence = "override"
 SPDX-FileCopyrightText = "The Linux kernel contributors; retained source notices apply"

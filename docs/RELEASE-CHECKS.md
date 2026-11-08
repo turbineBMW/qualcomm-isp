@@ -1,5 +1,87 @@
 # Initial source publication checks
 
+## Gaze switching follow-up, runtime 0.1-13 (2026-11-08)
+
+- User acceptance found black viewfinders when switching front -> rear ->
+  front before rear startup finished. At 09:59:05 the rear first requested
+  hardware; old front idle grace and two five-second retries delayed its first
+  frame until 09:59:18. The user had selected front at 09:59:17. Rear startup
+  nevertheless set last_seen ten seconds into the future, then held the lock
+  for the additional five-second idle grace. Front kept failing to acquire it
+  until Gaze closed at 09:59:32; rear finally stopped at 09:59:34.
+- The original rear session processed 236 frames with non-black luma and clean
+  teardown. No kernel fault or ISP crash caused this incident. The earlier
+  separate-process capture tests did not cover cancelled startup in Gaze.
+- Runtime 0.1-13 releases an unused camera when its peer is requested, removes
+  future consumer-presence time at startup, and reports lock contention as
+  `busy` for one-second retries. Graph-query failure preserves ownership.
+- Installed and tested through Gaze's actual picker. Rear imagery displayed;
+  cancelled-start trace: rear first frame 10:09:42, release at 10:09:43,
+  cleanup complete 10:09:44, front first frame 10:09:46 following selection
+  at 10:09:42. No Gaze source change was needed. Package check phase passed
+  52 lifecycle/transport/demand tests plus six PD10 comparisons. The added
+  single-process, clock-synchronised capture regression passed: front first
+  image 1.76 s, rear 3.66 s, front 2.69 s, front after cancelled rear startup
+  2.47 s, each with ten non-black frames and increasing timestamps.
+- Rear imagery has a conspicuous blue cast in this lighting. Colour/AWB
+  qualification is still outstanding; this switching fix does not correct it.
+
+## Rear activation and conditional routing, runtime 0.1-12 (2026-11-08)
+
+- Imported the existing, hash-verified OV13858 adaptive bank; installed the
+  separate rear configuration and enabled its socket and user publisher.
+- Initial rear capture exposed stale sensor mode blanking limits: 115,566 us
+  exposure exceeded the adaptive metadata envelope, causing a worker timeout.
+  Private libcamera `0.7.2-5` refreshes limits after mode configuration. With
+  1056x784 explicitly selected before capture, 180 desktop frames passed;
+  247 processed frames including idle grace stayed at 66,697 us with no
+  cleanup errors. The validation limit was not relaxed.
+- Front 360p -> rear 1080p -> front 720p -> rear 4K -> rear 360p completed
+  90 frames per consumer (7.35, 13.42, 11.41, 13.37, 6.09 seconds including
+  startup/switching). The exclusive hardware lock rejected initial attempts
+  during the previous camera's idle grace; automatic retry succeeded.
+  Rear sessions exited normally, the Bayer override was restored, ICP unloaded,
+  and runtime usage returned to zero. No new kernel faults were observed.
+- WirePlumber policy checks passed for both publishers, each independent
+  fallback, both fallbacks, both monitor/publisher startup orders and three
+  publisher restarts. Only the two ISP Video/Source nodes remain when both are
+  available. Kernel sensors and direct V4L2/libcamera access remain enabled.
+- Runtime package check phase passed all 44 lifecycle/transport tests and six
+  PD10 reference comparisons. The private libcamera and runtime were rebuilt
+  and installed without replacing system libcamera or changing the kernel.
+
+Rear remains experimental: broad colour/lighting and rear suspend/resume
+qualification have not been performed in this session. Front and rear cannot
+stream simultaneously. The conflicting-resolution consumer limitation below
+is unchanged.
+
+## Publisher formats and recovery, runtime 0.1-11 (2026-11-08)
+
+- Runtime package built with all 44 transport/lifecycle tests and six PD10
+  reference comparisons passing. The complete bridge diff reconstructs the
+  vendored sources from all 18 verified pinned upstream blobs; modified-file
+  hashes and patch hash were regenerated.
+- Synthetic desktop integration passed against the built bridge: four output
+  sizes, a 1080p-capped consumer, native default, rapid reconnects/size changes,
+  compatible concurrent consumers, full-range gray and alpha, unsupported idle
+  negotiation without replacing the node, idle stdin shutdown, one-error
+  in-process rebuilding and the three-rebuild rate limit. Reproduce with
+  `tools/test-publisher.py`; see [publisher notes](PUBLISHER.md).
+- Installed 0.1-11 on the Surface Pro 11, running kernel
+  `7.3.0-25.2-omarchy`. Package verification reported 50 files, zero altered.
+  An unsupported 1024x768 request failed while the publisher remained available.
+  Ninety-frame consumers then passed at 1920x1080, 1280x720, 3840x2160 and
+  640x360, with the same publisher process and node throughout and zero service
+  restarts. ICP unloaded and runtime usage returned to zero after idle.
+- A fresh native 4K session after the worker stopped passed 90 frames in 6.09 s,
+  followed by the same idle cleanup. No SMMU/translation/invalid-command/oops
+  messages appeared in the kernel journal during these checks.
+- The incompatible-concurrent-client stall documented in PUBLISHER.md remains
+  unresolved and also reproduces with the unchanged 0.1-10 publisher. Gaze GUI,
+  rear-camera output and suspend/resume were not retested for this change.
+
+## Initial checks (2026-10-17)
+
 Checked on 2026-10-17, separately from the physical camera acceptance recorded
 in the README:
 

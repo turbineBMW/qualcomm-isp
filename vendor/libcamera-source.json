@@ -37,6 +37,14 @@
         "src/libcamera/pipeline/camss/camss_raw_stats.cpp": "6341342ca7d14a027a020e5a3e01d0eee320df0ef47f9f783db2c2cbbcc357d5",
         "src/libcamera/pipeline/camss/camss_raw_stats.h": "09b30c3415e8d31c2f380dd3aec2439889bf5bd477fc8ecc9717f4b48dde41f1"
       }
+    },
+    {
+      "path": "experiments/ov13858/mode-controls.patch",
+      "sha256": "d2f77793dd16e258afbf5d1c02dca12d6ad807906818feca323af8ead22f24b4",
+      "description": "Refresh sensor mode blanking limits before deriving exposure bounds",
+      "modified_files": {
+        "src/libcamera/pipeline/camss/camss_isp_inline.cpp": "d896e6f0a6957414f8b96079cc9ede6034fab410966f6015b4f1ff054c022f70"
+      }
     }
   ]
 }

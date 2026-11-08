@@ -55,6 +55,7 @@ enum
   PROP_FD,
   PROP_SLAVE_METHOD,
   PROP_USE_BUFFERPOOL,
+  PROP_FORMATS,
 };
 
 GType
@@ -117,6 +118,7 @@ static GstStateChangeReturn
 gst_pipewire_sink_change_state (GstElement * element, GstStateChange transition);
 
 static gboolean gst_pipewire_sink_setcaps (GstBaseSink * bsink, GstCaps * caps);
+static GstCaps *gst_pipewire_sink_getcaps (GstBaseSink * bsink, GstCaps * filter);
 static GstCaps *gst_pipewire_sink_sink_fixate (GstBaseSink * bsink,
     GstCaps * caps);
 
@@ -158,6 +160,8 @@ gst_pipewire_sink_finalize (GObject * object)
   GstPipeWireSink *pwsink = GST_PIPEWIRE_SINK (object);
 
   gst_clear_object (&pwsink->stream);
+  gst_clear_caps (&pwsink->formats);
+  gst_clear_caps (&pwsink->current_format);
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -275,6 +279,26 @@ gst_pipewire_sink_class_init (GstPipeWireSinkClass * klass)
                                                       G_PARAM_READWRITE |
                                                       G_PARAM_STATIC_STRINGS));
 
+  /**
+   * GstPipeWireSink:formats:
+   *
+   * Fixed raw video formats to advertise to PipeWire in place of the single
+   * caps negotiated on the sink pad, in order of preference. Peers then pick
+   * one; the sink reports it upstream through its caps and a reconfigure
+   * event, so a scaler before the sink produces the picked size. The first
+   * entry should be the size upstream produces by itself. NULL (default)
+   * keeps the upstream behaviour: exactly the negotiated caps.
+   */
+  g_object_class_install_property (gobject_class,
+                                   PROP_FORMATS,
+                                   g_param_spec_boxed ("formats",
+                                                       "Advertised formats",
+                                                       "Fixed raw video formats offered to PipeWire peers (NULL = the negotiated caps)",
+                                                       GST_TYPE_CAPS,
+                                                       G_PARAM_READWRITE |
+                                                       G_PARAM_STATIC_STRINGS |
+                                                       GST_PARAM_MUTABLE_READY));
+
   gstelement_class->provide_clock = gst_pipewire_sink_provide_clock;
   gstelement_class->change_state = gst_pipewire_sink_change_state;
 
@@ -286,6 +310,7 @@ gst_pipewire_sink_class_init (GstPipeWireSinkClass * klass)
       gst_static_pad_template_get (&gst_pipewire_sink_template));
 
   gstbasesink_class->set_caps = gst_pipewire_sink_setcaps;
+  gstbasesink_class->get_caps = gst_pipewire_sink_getcaps;
   gstbasesink_class->fixate = gst_pipewire_sink_sink_fixate;
   gstbasesink_class->propose_allocation = gst_pipewire_sink_propose_allocation;
   gstbasesink_class->render = gst_pipewire_sink_render;
@@ -318,6 +343,11 @@ gst_pipewire_sink_update_params (GstPipeWireSink *sink)
     GST_WARNING_OBJECT (sink, "cannot support unlimited buffers in pool");
     max_buffers = PIPEWIRE_POOL_MAX_BUFFERS;
   }
+
+  /* Buffers hold frames of the format the peers negotiated, which may be
+   * smaller than the caps the pool was configured with. */
+  if (pool->has_rawvideo && pool->video_info.size != 0)
+    size = pool->video_info.size;
 
   spa_pod_builder_init (&b, buffer, sizeof (buffer));
   spa_pod_builder_push_object (&b, &f, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers);
@@ -497,6 +527,36 @@ gst_pipewire_sink_set_property (GObject * object, guint prop_id,
         pwsink->use_bufferpool = USE_BUFFERPOOL_NO;
       break;
 
+    case PROP_FORMATS:
+    {
+      const GstCaps *caps = gst_value_get_caps (value);
+      GstCaps *formats = NULL;
+
+      if (caps != NULL && !gst_caps_is_empty (caps) && !gst_caps_is_any (caps)) {
+        guint i, n = gst_caps_get_size (caps);
+        gboolean fixed = TRUE;
+
+        for (i = 0; i < n && fixed; i++) {
+          GstCaps *one = gst_caps_new_full (gst_structure_copy (gst_caps_get_structure (caps, i)), NULL);
+          GstVideoInfo info;
+
+          fixed = gst_caps_is_fixed (one) && gst_video_info_from_caps (&info, one) &&
+              GST_VIDEO_FORMAT_INFO_IS_VALID_RAW (info.finfo);
+          gst_caps_unref (one);
+        }
+        if (!fixed) {
+          GST_WARNING_OBJECT (pwsink, "every format must be fixed raw video, ignoring %" GST_PTR_FORMAT, caps);
+          break;
+        }
+        formats = gst_caps_copy (caps);
+      }
+      GST_OBJECT_LOCK (pwsink);
+      gst_caps_replace (&pwsink->formats, formats);
+      GST_OBJECT_UNLOCK (pwsink);
+      gst_clear_caps (&formats);
+      break;
+    }
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -546,10 +606,115 @@ gst_pipewire_sink_get_property (GObject * object, guint prop_id,
       g_value_set_boolean (value, !!pwsink->use_bufferpool);
       break;
 
+    case PROP_FORMATS:
+      GST_OBJECT_LOCK (pwsink);
+      gst_value_set_caps (value, pwsink->formats);
+      GST_OBJECT_UNLOCK (pwsink);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
   }
+}
+
+/* Upstream asks what we accept: the format the peers picked while one is
+ * set, else every advertised format, else anything (upstream behaviour). */
+static GstCaps *
+gst_pipewire_sink_getcaps (GstBaseSink * bsink, GstCaps * filter)
+{
+  GstPipeWireSink *pwsink = GST_PIPEWIRE_SINK (bsink);
+  GstCaps *caps;
+
+  GST_OBJECT_LOCK (pwsink);
+  if (pwsink->current_format)
+    caps = gst_caps_ref (pwsink->current_format);
+  else if (pwsink->formats)
+    caps = gst_caps_ref (pwsink->formats);
+  else
+    caps = gst_pad_get_pad_template_caps (GST_BASE_SINK_PAD (bsink));
+  GST_OBJECT_UNLOCK (pwsink);
+
+  if (filter) {
+    GstCaps *intersection =
+        gst_caps_intersect_full (filter, caps, GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (caps);
+    caps = intersection;
+  }
+  GST_DEBUG_OBJECT (pwsink, "accepting %" GST_PTR_FORMAT, caps);
+  return caps;
+}
+
+/* The advertised formats, each completed with the fields of the negotiated
+ * caps it does not set itself (colorimetry, pixel aspect ...), so peers see
+ * exactly what the pipeline produces. */
+static GstCaps *
+gst_pipewire_sink_advertised_caps (GstPipeWireSink * pwsink, GstCaps * negotiated)
+{
+  GstCaps *result;
+  GstStructure *base = gst_caps_get_structure (negotiated, 0);
+  guint i, n;
+
+  GST_OBJECT_LOCK (pwsink);
+  if (pwsink->formats == NULL) {
+    GST_OBJECT_UNLOCK (pwsink);
+    return gst_caps_ref (negotiated);
+  }
+  result = gst_caps_new_empty ();
+  n = gst_caps_get_size (pwsink->formats);
+  for (i = 0; i < n; i++) {
+    GstStructure *entry = gst_caps_get_structure (pwsink->formats, i);
+    GstStructure *s = gst_structure_copy (base);
+    gint f;
+
+    for (f = 0; f < gst_structure_n_fields (entry); f++) {
+      const gchar *name = gst_structure_nth_field_name (entry, f);
+      gst_structure_set_value (s, name, gst_structure_get_value (entry, name));
+    }
+    gst_caps_append_structure (result, s);
+  }
+  GST_OBJECT_UNLOCK (pwsink);
+  return result;
+}
+
+/* A peer negotiated this format with our node: find the advertised entry it
+ * corresponds to (raw video: same format and size). */
+static GstCaps *
+gst_pipewire_sink_match_format (GstPipeWireSink * pwsink, const struct spa_pod *param)
+{
+  GstCaps *peer, *match = NULL;
+  GstVideoInfo info;
+  guint i, n;
+
+  peer = gst_caps_from_format (param);
+  if (peer == NULL || !gst_video_info_from_caps (&info, peer)) {
+    GST_WARNING_OBJECT (pwsink, "cannot parse the negotiated format %" GST_PTR_FORMAT, peer);
+    gst_clear_caps (&peer);
+    return NULL;
+  }
+  GST_OBJECT_LOCK (pwsink);
+  n = pwsink->formats ? gst_caps_get_size (pwsink->formats) : 0;
+  for (i = 0; i < n && match == NULL; i++) {
+    GstStructure *entry = gst_caps_get_structure (pwsink->formats, i);
+    GstVideoInfo candidate;
+    GstCaps *one = gst_caps_new_full (gst_structure_copy (entry), NULL);
+
+    if (gst_video_info_from_caps (&candidate, one) &&
+        GST_VIDEO_INFO_FORMAT (&candidate) == GST_VIDEO_INFO_FORMAT (&info) &&
+        GST_VIDEO_INFO_WIDTH (&candidate) == GST_VIDEO_INFO_WIDTH (&info) &&
+        GST_VIDEO_INFO_HEIGHT (&candidate) == GST_VIDEO_INFO_HEIGHT (&info) &&
+        gst_util_fraction_compare (GST_VIDEO_INFO_FPS_N (&candidate), GST_VIDEO_INFO_FPS_D (&candidate),
+            GST_VIDEO_INFO_FPS_N (&info), GST_VIDEO_INFO_FPS_D (&info)) == 0)
+      match = one;
+    else
+      gst_caps_unref (one);
+  }
+  GST_OBJECT_UNLOCK (pwsink);
+  if (match == NULL)
+    GST_WARNING_OBJECT (pwsink, "negotiated format %" GST_PTR_FORMAT
+        " is not among the advertised formats", peer);
+  gst_caps_unref (peer);
+  return match;
 }
 
 static void rate_match_resample(GstPipeWireSink *pwsink)
@@ -814,11 +979,20 @@ on_state_changed (void *data, enum pw_stream_state old, enum pw_stream_state sta
           invoke_trigger_process, 1, NULL, 0 , false, pwsink);
       break;
     case PW_STREAM_STATE_ERROR:
-      /* make the error permanent, if it is not already;
-         pw_stream_set_error() will recursively call us again */
-      if (pw_stream_get_state (pwsink->stream->pwstream, NULL) != PW_STREAM_STATE_ERROR)
+      if (pw_stream_get_state (pwsink->stream->pwstream, NULL) != PW_STREAM_STATE_ERROR) {
+        /* Reported through our proxy without changing the stream state. For
+         * a provider that is a peer failing to link with us, typically
+         * because its formats and ours do not intersect ("no more input
+         * formats"). The server tears that link down; this node and its
+         * other links are intact, so keep providing. */
+        if (pwsink->mode == GST_PIPEWIRE_SINK_MODE_PROVIDE) {
+          GST_WARNING_OBJECT (pwsink, "peer error, node stays published: %s", error);
+          break;
+        }
+        /* make the error permanent, if it is not already;
+           pw_stream_set_error() will recursively call us again */
         pw_stream_set_error (pwsink->stream->pwstream, -EPIPE, "%s", error);
-      else
+      } else
         GST_ELEMENT_ERROR (pwsink, RESOURCE, FAILED,
             ("stream error: %s", error), (NULL));
       break;
@@ -831,9 +1005,52 @@ on_param_changed (void *data, uint32_t id, const struct spa_pod *param)
 {
   GstPipeWireSink *pwsink = data;
   GstPipeWirePool *pool = pwsink->stream->pool;
+  gboolean advertising;
 
-  if (param == NULL || id != SPA_PARAM_Format)
+  if (id != SPA_PARAM_Format)
     return;
+
+  GST_OBJECT_LOCK (pwsink);
+  advertising = pwsink->formats != NULL;
+  GST_OBJECT_UNLOCK (pwsink);
+
+  if (param == NULL) {
+    /* The format is cleared when the node suspends (last peer gone). The
+     * next peer negotiates from the full list again. */
+    if (advertising) {
+      GST_OBJECT_LOCK (pwsink);
+      gst_clear_caps (&pwsink->current_format);
+      GST_OBJECT_UNLOCK (pwsink);
+      GST_INFO_OBJECT (pwsink, "PipeWire format cleared");
+    }
+    return;
+  }
+
+  if (advertising) {
+    GstCaps *chosen = gst_pipewire_sink_match_format (pwsink, param);
+    GstVideoInfo info;
+
+    if (chosen != NULL && gst_video_info_from_caps (&info, chosen)) {
+      GstVideoInfo in_info;
+      gboolean changed;
+
+      /* Buffers are (re)allocated after this param for the picked format;
+       * render() copies frames of that size into them and drops others. */
+      gst_pipewire_pool_set_video_info (pool, &info);
+      GST_OBJECT_LOCK (pwsink);
+      in_info = pwsink->in_info;
+      gst_caps_replace (&pwsink->current_format, chosen);
+      GST_OBJECT_UNLOCK (pwsink);
+      changed = GST_VIDEO_INFO_FORMAT (&in_info) != GST_VIDEO_INFO_FORMAT (&info) ||
+          GST_VIDEO_INFO_WIDTH (&in_info) != GST_VIDEO_INFO_WIDTH (&info) ||
+          GST_VIDEO_INFO_HEIGHT (&in_info) != GST_VIDEO_INFO_HEIGHT (&info);
+      GST_INFO_OBJECT (pwsink, "PipeWire negotiated %" GST_PTR_FORMAT " (%s upstream)",
+          chosen, changed ? "reconfiguring" : "matches");
+      if (changed)
+        gst_pad_push_event (GST_BASE_SINK_PAD (pwsink), gst_event_new_reconfigure ());
+    }
+    gst_clear_caps (&chosen);
+  }
 
   GST_OBJECT_LOCK (pool);
   while (!gst_buffer_pool_is_active (GST_BUFFER_POOL (pool))) {
@@ -886,11 +1103,19 @@ gst_pipewire_sink_setcaps (GstBaseSink * bsink, GstCaps * caps)
       pwsink->is_rawvideo = TRUE;
     else
       pwsink->is_rawvideo = FALSE;
+    GST_OBJECT_LOCK (pwsink);
+    pwsink->in_info = video_info;
+    GST_OBJECT_UNLOCK (pwsink);
   }
 
   spa_dll_set_bw(&pwsink->stream->dll, SPA_DLL_BW_MIN, 4096, rate);
 
-  possible = gst_caps_to_format_all (caps);
+  {
+    GstCaps *advertised = gst_pipewire_sink_advertised_caps (pwsink, caps);
+    GST_DEBUG_OBJECT (pwsink, "offering PipeWire %" GST_PTR_FORMAT, advertised);
+    possible = gst_caps_to_format_all (advertised);
+    gst_caps_unref (advertised);
+  }
 
   pw_thread_loop_lock (pwsink->stream->core->loop);
   state = pw_stream_get_state (pwsink->stream->pwstream, &error);
@@ -967,16 +1192,23 @@ gst_pipewire_sink_setcaps (GstBaseSink * bsink, GstCaps * caps)
 
   gst_pipewire_clock_reset (GST_PIPEWIRE_CLOCK (pwsink->stream->clock), 0);
 
-  config = gst_buffer_pool_get_config (GST_BUFFER_POOL_CAST (pwsink->stream->pool));
-  gst_buffer_pool_config_get_params (config, NULL, &size, &min_buffers, &max_buffers);
-  gst_buffer_pool_config_set_params (config, caps, size, min_buffers, max_buffers);
-  if (pwsink->is_rawvideo) {
-    gst_buffer_pool_config_add_option (config, GST_BUFFER_POOL_OPTION_VIDEO_META);
+  if (gst_buffer_pool_is_active (GST_BUFFER_POOL_CAST (pwsink->stream->pool))) {
+    /* Upstream followed a PipeWire format change (see on_param_changed): the
+     * pool already wraps buffers of the picked format, and an active pool
+     * cannot be reconfigured. render() checks that frames match it. */
+    GST_DEBUG_OBJECT (pwsink, "pool active, keeping its PipeWire format");
+  } else {
+    config = gst_buffer_pool_get_config (GST_BUFFER_POOL_CAST (pwsink->stream->pool));
+    gst_buffer_pool_config_get_params (config, NULL, &size, &min_buffers, &max_buffers);
+    gst_buffer_pool_config_set_params (config, caps, size, min_buffers, max_buffers);
+    if (pwsink->is_rawvideo) {
+      gst_buffer_pool_config_add_option (config, GST_BUFFER_POOL_OPTION_VIDEO_META);
 #ifdef HAVE_GSTREAMER_SHM_ALLOCATOR
-    gst_buffer_pool_config_add_option (config, GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
+      gst_buffer_pool_config_add_option (config, GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
 #endif
+    }
+    gst_buffer_pool_set_config (GST_BUFFER_POOL_CAST (pwsink->stream->pool), config);
   }
-  gst_buffer_pool_set_config (GST_BUFFER_POOL_CAST (pwsink->stream->pool), config);
 
   pw_thread_loop_unlock (pwsink->stream->core->loop);
 
@@ -1064,6 +1296,7 @@ gst_pipewire_sink_render (GstBaseSink * bsink, GstBuffer * buffer)
 
       if (pwsink->is_rawvideo) {
         GstVideoFrame src, dst;
+        GstVideoInfo dst_info;
         gboolean copied = FALSE;
         buf_size = 0; // to break from the loop
 
@@ -1072,14 +1305,29 @@ gst_pipewire_sink_render (GstBaseSink * bsink, GstBuffer * buffer)
          * side. Hence use the video_frame_map to copy the buffer of bigger size into the
          * pipewirepool's buffer */
 
-        if (!gst_video_frame_map (&dst, &pwsink->stream->pool->video_info, b, GST_MAP_WRITE)) {
+        gst_pipewire_pool_get_video_info (pwsink->stream->pool, &dst_info);
+        if (GST_VIDEO_INFO_FORMAT (&dst_info) != GST_VIDEO_INFO_FORMAT (&pwsink->in_info) ||
+            GST_VIDEO_INFO_WIDTH (&dst_info) != GST_VIDEO_INFO_WIDTH (&pwsink->in_info) ||
+            GST_VIDEO_INFO_HEIGHT (&dst_info) != GST_VIDEO_INFO_HEIGHT (&pwsink->in_info)) {
+          /* Peers negotiated another advertised format and upstream has not
+           * reconfigured yet (on_param_changed asked it to): skip this frame. */
+          GST_DEBUG_OBJECT (pwsink, "frame %dx%d, PipeWire buffers %dx%d: dropping until upstream follows",
+              GST_VIDEO_INFO_WIDTH (&pwsink->in_info), GST_VIDEO_INFO_HEIGHT (&pwsink->in_info),
+              GST_VIDEO_INFO_WIDTH (&dst_info), GST_VIDEO_INFO_HEIGHT (&dst_info));
+          gst_buffer_unref (b);
+          goto done;
+        }
+
+        if (!gst_video_frame_map (&dst, &dst_info, b, GST_MAP_WRITE)) {
           GST_ERROR_OBJECT(pwsink, "Failed to map dest buffer");
+          gst_buffer_unref (b);
           return GST_FLOW_ERROR;
         }
 
-        if (!gst_video_frame_map (&src, &pwsink->stream->pool->video_info, buffer, GST_MAP_READ)) {
+        if (!gst_video_frame_map (&src, &pwsink->in_info, buffer, GST_MAP_READ)) {
           gst_video_frame_unmap (&dst);
           GST_ERROR_OBJECT(pwsink, "Failed to map src buffer");
+          gst_buffer_unref (b);
           return GST_FLOW_ERROR;
         }
 
@@ -1090,6 +1338,7 @@ gst_pipewire_sink_render (GstBaseSink * bsink, GstBuffer * buffer)
 
         if (!copied) {
           GST_ERROR_OBJECT(pwsink, "Failed to copy the frame");
+          gst_buffer_unref (b);
           return GST_FLOW_ERROR;
         }
 
@@ -1110,7 +1359,9 @@ gst_pipewire_sink_render (GstBaseSink * bsink, GstBuffer * buffer)
       }
 
       pw_thread_loop_lock (pwsink->stream->core->loop);
-      if (pw_stream_get_state (pwsink->stream->pwstream, &error) != PW_STREAM_STATE_STREAMING) {
+      if (pw_stream_get_state (pwsink->stream->pwstream, &error) != PW_STREAM_STATE_STREAMING ||
+          gst_pipewire_pool_get_data (b)->b == NULL) {
+        /* A reconnect can retire this buffer while the pixels are copied. */
         gst_buffer_unref (b);
         goto done_unlock;
       }

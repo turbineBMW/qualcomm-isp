@@ -88,6 +88,15 @@ class WorkerdTests(unittest.TestCase):
         self.assertFalse(self.thread.is_alive())
         self.assertEqual(c.recv(65536), b''); c.close()
 
+    def test_shared_hardware_busy_is_not_a_capture_failure(self):
+        c = self.client()
+        FakeSession.fail_next = True
+        with patch.object(FakeSession, 'stop', return_value=os.EX_TEMPFAIL):
+            reply, keep = self.start(c)
+        self.assertEqual(reply['type'], 'busy')
+        self.assertEqual(reply['error'], 'session exited 75')
+        c.close(); keep.close()
+
     def test_shutdown_stops_active_session_without_client_disconnect(self):
         c = self.client(); result, keep = self.start(c)
         self.assertEqual(result['type'], 'started')

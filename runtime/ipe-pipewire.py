@@ -6,12 +6,19 @@
 Stdin format: <sequence:u64, capture_monotonic_ns:u64> then 3840x2160 NV12.
 Upstream queues are bounded and discard old frames. The private PipeWire bridge
 re-triggers starved video drivers; producer progress alone is not display proof.
+
+The node advertises FORMATS (native 4K first). Peers pick one; the bridge
+reports the pick upstream and videoconvertscale produces that size, so a
+1080p-capped client negotiates instead of failing. A peer whose formats do not
+intersect ours does not make a proxy error fatal to this publisher. In
+--standby the pipeline is rebuilt in-process should the stream itself error.
 """
 import argparse
 import importlib.util
 import json
 import os
 from pathlib import Path
+import select
 import signal
 import socket
 import struct
@@ -28,8 +35,15 @@ W, H = 3840, 2160
 SIZE = W * H * 3 // 2
 NOMINAL_FPS = 30   # the pipelined worker publishes at the sensor cadence
 TRANSPORT_BUFFERS = 8
+# Sizes offered to PipeWire peers, in order of preference. All 16:9 like the
+# sensor output, so scaling never letterboxes. The first is the native size.
+FORMATS = [(3840, 2160), (1920, 1080), (1280, 720), (640, 360)]
+# --standby: pipeline errors beyond this many within REBUILD_WINDOW seconds
+# end the process (systemd restarts it) instead of rebuilding again.
+REBUILD_LIMIT, REBUILD_WINDOW = 3, 60
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import isp_config
+from ipe_demand import camera_demand, should_release
 CONFIG, BOARD = isp_config.load()
 PRIVATE_BRIDGE = Path(CONFIG['bridge'])
 
@@ -58,6 +72,60 @@ def configure_transport_pool(sink):
         print(f'PipeWire transport pool: 2..{TRANSPORT_BUFFERS} native-4K RGBA buffers', flush=True)
     finally:
         sink.set_property('use-bufferpool', False)
+
+
+def advertised_formats():
+    return Gst.Caps.from_string('; '.join(
+        f'video/x-raw,format=RGBA,width={w},height={h},framerate={NOMINAL_FPS}/1' for w, h in FORMATS))
+
+
+def build_pipeline(node_name):
+    """appsrc -> queue -> videoconvertscale -> RGBA -> pipewiresink, in NULL state.
+
+    Returns (pipeline, source, queue, sink). The sink advertises FORMATS and,
+    once peers pick one, tells videoconvertscale to produce that size.
+    """
+    pipeline = Gst.Pipeline.new('sp11-ipe-preview')
+    source = Gst.ElementFactory.make('appsrc', 'frames')
+    queue = Gst.ElementFactory.make('queue', 'latest')
+    convert = Gst.ElementFactory.make('videoconvertscale', 'rgb-at-peer-size')
+    sink = Gst.ElementFactory.make('pipewiresink', 'camera')
+    if not all((pipeline, source, queue, convert, sink)):
+        raise RuntimeError('Missing GStreamer appsrc/queue/videoconvertscale/pipewiresink')
+    # Full-range BT.601, matching the verified IFE/IPE NV12 converter.
+    source.set_property('caps', Gst.Caps.from_string(
+        f'video/x-raw,format=NV12,width={W},height={H},framerate={NOMINAL_FPS}/1,colorimetry=1:4:5:4,pixel-aspect-ratio=1/1'))
+    # The installed PipeWire GStreamer bridge omits YUV colourimetry on the
+    # receiving caps. Convert while the full-range BT.601 contract is known;
+    # RGBA preserves the display RGB values and sets opaque alpha. Chromium
+    # WebRTC accepts RGBA but rejects RGBx when enumerating camera formats.
+    # The sink's advertised formats constrain both size and RGBA. Link it
+    # directly to the scaler: an intervening capsfilter may try to renegotiate
+    # an in-flight old-size buffer before the scaler handles RECONFIGURE.
+    convert.set_property('n-threads', 4)
+    for key, value in [('is-live', True), ('format', Gst.Format.TIME), ('block', False),
+                       ('max-buffers', 2), ('max-bytes', SIZE * 2), ('leaky-type', 2)]:
+        source.set_property(key, value)
+    for key, value in [('max-size-buffers', 2), ('max-size-bytes', 0), ('max-size-time', 0), ('leaky', 2)]:
+        queue.set_property(key, value)
+    properties = Gst.Structure.new_empty('props')
+    for key, value in [('media.class', 'Video/Source'), ('media.role', 'Camera'),
+                       ('node.name', node_name), ('node.description', BOARD['description']),
+                       ('qualcomm.isp.raw-node', BOARD.get('raw_node_name', '')),
+                       ('node.nick', BOARD.get('nickname', 'Front Camera (ISP)')), ('priority.session', 800),
+                       ('node.virtual', True)]:
+        properties.set_value(key, value)
+    sink.set_property('stream-properties', properties)
+    sink.set_property('mode', 2)
+    sink.set_property('sync', False)
+    sink.set_property('enable-last-sample', False)
+    sink.set_property('formats', advertised_formats())
+    configure_transport_pool(sink)
+    for item in (source, queue, convert, sink):
+        pipeline.add(item)
+    if not all((source.link(queue), queue.link(convert), convert.link(sink))):
+        raise RuntimeError('Could not link publisher')
+    return pipeline, source, queue, sink
 
 
 def main():
@@ -90,15 +158,10 @@ def main():
         loaded = Gst.Plugin.load_file(str(args.pipewire_plugin.resolve(strict=True)))
         if loaded is None or loaded.get_name() != 'pipewire':
             raise RuntimeError('Could not load the private PipeWire bridge')
-    pipeline = Gst.Pipeline.new('sp11-ipe-preview')
-    source = Gst.ElementFactory.make('appsrc', 'frames')
-    queue = Gst.ElementFactory.make('queue', 'latest')
-    convert = Gst.ElementFactory.make('videoconvert', 'full-range-rgb')
-    rgb = Gst.ElementFactory.make('capsfilter', 'unambiguous-colour')
-    sink = Gst.ElementFactory.make('pipewiresink', 'camera')
-    if not all((pipeline, source, queue, convert, rgb, sink)):
-        raise RuntimeError('Missing GStreamer appsrc/queue/pipewiresink')
-    plugin = sink.get_factory().get_plugin()
+    factory = Gst.ElementFactory.find('pipewiresink')
+    if factory is None or not Gst.ElementFactory.find('videoconvertscale'):
+        raise RuntimeError('Missing GStreamer videoconvertscale/pipewiresink')
+    plugin = factory.get_plugin()
     plugin_path = Path(plugin.get_filename()).resolve()
     if not args.system_pipewire and plugin_path != args.pipewire_plugin.resolve():
         raise RuntimeError(f'Unexpected PipeWire bridge: {plugin_path}')
@@ -107,39 +170,14 @@ def main():
         if shared:
             shared.close()
         return
-    # Full-range BT.601, matching the verified IFE/IPE NV12 converter.
-    source.set_property('caps', Gst.Caps.from_string(
-        f'video/x-raw,format=NV12,width={W},height={H},framerate={NOMINAL_FPS}/1,colorimetry=1:4:5:4,pixel-aspect-ratio=1/1'))
-    # The installed PipeWire GStreamer bridge omits YUV colourimetry on the
-    # receiving caps. Convert while the full-range BT.601 contract is known;
-    # RGBA preserves the display RGB values and sets opaque alpha. Chromium
-    # WebRTC accepts RGBA but rejects RGBx when enumerating camera formats.
-    rgb.set_property('caps', Gst.Caps.from_string('video/x-raw,format=RGBA'))
-    convert.set_property('n-threads', 4)
-    for key, value in [('is-live', True), ('format', Gst.Format.TIME), ('block', False),
-                       ('max-buffers', 2), ('max-bytes', SIZE * 2), ('leaky-type', 2)]:
-        source.set_property(key, value)
-    for key, value in [('max-size-buffers', 2), ('max-size-bytes', 0), ('max-size-time', 0), ('leaky', 2)]:
-        queue.set_property(key, value)
-    properties = Gst.Structure.new_empty('props')
-    for key, value in [('media.class', 'Video/Source'), ('media.role', 'Camera'),
-                       ('node.name', args.node_name), ('node.description', BOARD['description']),
-                       ('node.nick', BOARD.get('nickname', 'Front Camera (ISP)')), ('priority.session', 800),
-                       ('node.virtual', True)]:
-        properties.set_value(key, value)
-    sink.set_property('stream-properties', properties)
-    sink.set_property('mode', 2)
-    sink.set_property('sync', False)
-    sink.set_property('enable-last-sample', False)
-    configure_transport_pool(sink)
-    for item in (source, queue, convert, rgb, sink):
-        pipeline.add(item)
-    if not all((source.link(queue), queue.link(convert), convert.link(rgb), rgb.link(sink))):
-        raise RuntimeError('Could not link publisher')
     origin = time.monotonic_ns()
     loop = GLib.MainLoop()
     failed = []
     stopping = threading.Event()
+    # The live pipeline parts; swapped under pipe_lock by rebuild_pipeline().
+    pipe = dict(pipeline=None, source=None, bus=None)
+    pipe_lock = threading.Lock()
+    rebuilds = []
     # Display-side evidence: what actually reaches the PipeWire sink, when.
     stats = dict(pushed=0, sink=0, queue_overruns=0, latency_ms=[], last_report=time.monotonic())
     stats_lock = threading.Lock()
@@ -164,25 +202,64 @@ def main():
             stats['last_report'] = time.monotonic()
         print('STATS ' + json.dumps(summary), flush=True)
 
-    sink.get_static_pad('sink').add_probe(Gst.PadProbeType.BUFFER, sink_probe)
-    queue.connect('overrun', lambda q: stats.__setitem__('queue_overruns', stats['queue_overruns'] + 1))
-
     def message(bus, msg):
         if msg.type == Gst.MessageType.ERROR:
-            failed.append(str(msg.parse_error()))
+            error = str(msg.parse_error())
+            if args.standby and not stopping.is_set():
+                # Keep the worker session. Replacing the pipeline also
+                # replaces the PipeWire node, so clients must reconnect.
+                now = time.monotonic()
+                rebuilds[:] = [t for t in rebuilds if now - t < REBUILD_WINDOW] + [now]
+                if len(rebuilds) <= REBUILD_LIMIT:
+                    print(f'PIPELINE {now:.3f} error, rebuilding ({len(rebuilds)}/{REBUILD_LIMIT} in {REBUILD_WINDOW} s): {error}', flush=True)
+                    try:
+                        rebuild_pipeline()
+                        push(BLACK, 0, time.monotonic_ns())
+                        return
+                    except Exception as exc:
+                        error = f'{error}; rebuild failed: {exc!r}'
+            failed.append(error)
             loop.quit()
         elif msg.type == Gst.MessageType.EOS:
             loop.quit()
 
-    bus = pipeline.get_bus()
-    bus.add_signal_watch()
-    bus.connect('message', message)
+    def start_pipeline():
+        """Build the pipeline, hook up evidence and errors, start it. Caller holds pipe_lock."""
+        pipeline, source, queue, sink = build_pipeline(args.node_name)
+        sink.get_static_pad('sink').add_probe(Gst.PadProbeType.BUFFER, sink_probe)
+        queue.connect('overrun', lambda q: stats.__setitem__('queue_overruns', stats['queue_overruns'] + 1))
+        bus = pipeline.get_bus()
+        bus.add_signal_watch()
+        bus.connect('message', message)
+        pipe.update(pipeline=pipeline, source=source, bus=bus)
+        if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
+            stop_pipeline()
+            raise RuntimeError('Could not start publisher pipeline')
+
+    def stop_pipeline():
+        """Caller holds pipe_lock."""
+        if pipe['bus'] is not None:
+            pipe['bus'].remove_signal_watch()
+        if pipe['pipeline'] is not None:
+            pipe['pipeline'].set_state(Gst.State.NULL)
+        pipe.update(pipeline=None, source=None, bus=None)
+
+    def rebuild_pipeline():
+        with pipe_lock:
+            stop_pipeline()
+            start_pipeline()
 
     def exact(size):
         result = bytearray(size)
         view = memoryview(result)
         while view:
-            n = sys.stdin.buffer.readinto(view)
+            if stopping.is_set():
+                return None
+            if not select.select([sys.stdin.fileno()], [], [], .2)[0]:
+                continue
+            # Avoid the buffered stdin lock: a daemon blocked in readinto()
+            # makes Python abort at shutdown after a signal or bus error.
+            n = os.readv(sys.stdin.fileno(), [view])
             if not n:
                 if len(view) != size:
                     raise EOFError('Truncated frame')
@@ -198,7 +275,10 @@ def main():
         buffer.dts = Gst.CLOCK_TIME_NONE
         buffer.duration = Gst.SECOND // NOMINAL_FPS
         buffer.offset = seq
-        result = source.emit('push-buffer', buffer)
+        with pipe_lock:
+            # appsrc does not block (block=False), so the lock is held briefly;
+            # a rebuild in progress makes the feeder wait, not fail.
+            result = pipe['source'].emit('push-buffer', buffer) if pipe['source'] else Gst.FlowReturn.OK
         if result not in (Gst.FlowReturn.OK, Gst.FlowReturn.FLUSHING):
             raise RuntimeError(f'Publisher flow error: {result}')
         with stats_lock:
@@ -249,18 +329,17 @@ def main():
     last_frame = [0.0]
     STALL_SECONDS = 8
 
-    def consumer_count():
-        """Distinct PipeWire nodes linked to our node, from pw-dump."""
+    def consumer_demand():
+        """Our linked clients and demand for the other exclusive ISP route."""
         try:
             objects = json.loads(subprocess.check_output(['pw-dump'], timeout=10))
         except (subprocess.SubprocessError, ValueError) as exc:
             print(f'STANDBY {time.monotonic():.3f} pw-dump failed: {exc}', flush=True)
-            return None
-        ours = {o['id'] for o in objects if o.get('type') == 'PipeWire:Interface:Node'
-                and o.get('info', {}).get('props', {}).get('node.name') == args.node_name}
-        peers = {o['info']['input-node-id'] for o in objects if o.get('type') == 'PipeWire:Interface:Link'
-                 and o.get('info', {}).get('output-node-id') in ours}
-        return len(peers)
+            return None, False
+        return camera_demand(objects, args.node_name)
+
+    class WorkerBusy(RuntimeError):
+        pass
 
     class Worker:
         """One privileged session requested from the worker daemon."""
@@ -278,6 +357,8 @@ def main():
                 self.control.sendmsg([json.dumps(dict(type='start')).encode()],
                                      [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [memfd, theirs.fileno()]))])
                 reply = json.loads(self.control.recv(65536) or b'{}')
+                if reply.get('type') == 'busy':
+                    raise WorkerBusy('The other camera owns the ISP')
                 if reply.get('type') != 'started':
                     raise RuntimeError(f'Worker did not start: {reply}')
                 self.session = reply.get('session')
@@ -320,7 +401,7 @@ def main():
         try:
             push(BLACK, 0, time.monotonic_ns())
             while not stopping.is_set():
-                count = consumer_count()
+                count, competing = consumer_demand()
                 if count:
                     last_seen = time.monotonic()
                 if feeder is not None and not feeder.is_alive():
@@ -337,15 +418,20 @@ def main():
                     print(f'STANDBY {time.monotonic():.3f} {count} consumer(s) linked: starting worker', flush=True)
                     try:
                         worker = Worker()
+                    except WorkerBusy:
+                        print(f'STANDBY {time.monotonic():.3f} ISP busy; rechecking camera selection in 1 s', flush=True)
+                        stopping.wait(1)
+                        continue
                     except BaseException as exc:
                         print(f'STANDBY {time.monotonic():.3f} worker start failed: {exc!r}; retrying in 5 s', flush=True)
                         worker = None
                         stopping.wait(5)
                         continue
                     print(f'STANDBY {time.monotonic():.3f} worker session {worker.session}', flush=True)
-                    # A module reload during start can drop PipeWire links for a
-                    # few seconds; do not read that as the consumer leaving.
-                    last_seen = time.monotonic() + 10
+                    # Startup may finish after the user switches away. Recheck
+                    # the graph on the next poll; do not hold the shared lock
+                    # for an extra ten seconds based on stale pre-start demand.
+                    last_seen = time.monotonic()
                     last_frame[0] = time.monotonic() + 10   # start grace
                     feeder = threading.Thread(target=feed_worker, args=(worker.consumer,), daemon=True)
                     feeder.start()
@@ -360,7 +446,7 @@ def main():
                     feeder = None
                     last_frame[0] = 0.0
                     push(BLACK, 0, time.monotonic_ns())
-                elif not count and worker is not None and time.monotonic() - last_seen >= args.idle_seconds:
+                elif worker is not None and should_release(count, competing, time.monotonic(), last_seen, args.idle_seconds):
                     print(f'STANDBY {time.monotonic():.3f} no consumer: stopping worker', flush=True)
                     worker.stop()
                     worker = None
@@ -379,7 +465,8 @@ def main():
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, loop.quit)
-    pipeline.set_state(Gst.State.PLAYING)
+    with pipe_lock:
+        start_pipeline()
     thread = threading.Thread(target=standby if args.standby else reader, daemon=True)
     thread.start()
     try:
@@ -388,6 +475,10 @@ def main():
         stopping.set()
         if args.standby:
             thread.join(60)
+        elif not shared:
+            thread.join(3)
+            if thread.is_alive():
+                failed.append('Stdin reader did not stop')
         if shared:
             shared.socket.shutdown(socket.SHUT_RDWR)
             thread.join(3)
@@ -395,7 +486,8 @@ def main():
                 failed.append('Shared-frame reader did not stop')
             else:
                 shared.close()
-        pipeline.set_state(Gst.State.NULL)
+        with pipe_lock:
+            stop_pipeline()
         report_stats(final=True)
     if failed:
         raise RuntimeError('; '.join(failed))

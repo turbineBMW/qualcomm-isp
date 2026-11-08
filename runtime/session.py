@@ -69,7 +69,11 @@ def main():
     if os.geteuid() != 0:
         raise SystemExit('Run through qualcomm-isp-worker or sudo -A')
     with open('/run/lock/camss-icp-lab.lock', 'a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            log('camera hardware is busy')
+            return os.EX_TEMPFAIL
         if Path('/sys/module/qcom_camss_icp').exists():
             raise RuntimeError('ICP already loaded; another session may own it')
         isp_config.identity()

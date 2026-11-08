@@ -87,6 +87,11 @@ GstPipeWirePoolData *gst_pipewire_pool_get_data (GstBuffer *buffer);
 
 void gst_pipewire_pool_set_paused (GstPipeWirePool *pool, gboolean paused);
 
+/* Make the pool wrap PipeWire buffers for this raw video format (what the
+ * peers negotiated), independent of the caps on the GStreamer side. */
+void gst_pipewire_pool_set_video_info (GstPipeWirePool *pool, const GstVideoInfo *info);
+void gst_pipewire_pool_get_video_info (GstPipeWirePool *pool, GstVideoInfo *info);
+
 G_END_DECLS
 
 #endif /* __GST_PIPEWIRE_POOL_H__ */

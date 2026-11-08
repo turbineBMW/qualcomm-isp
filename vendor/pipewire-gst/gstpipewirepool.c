@@ -445,6 +445,36 @@ set_config (GstBufferPool * pool, GstStructure * config)
 }
 
 
+void gst_pipewire_pool_set_video_info (GstPipeWirePool *pool, const GstVideoInfo *info)
+{
+  GST_OBJECT_LOCK (pool);
+  pool->has_video = TRUE;
+  pool->video_info = *info;
+  pool->has_rawvideo = GST_VIDEO_FORMAT_INFO_IS_VALID_RAW (pool->video_info.finfo)
+#ifdef HAVE_GSTREAMER_DMA_DRM
+      && GST_VIDEO_FORMAT_INFO_FORMAT (pool->video_info.finfo) != GST_VIDEO_FORMAT_DMA_DRM
+#endif
+      ;
+#ifdef HAVE_GSTREAMER_SHM_ALLOCATOR
+  if (pool->has_rawvideo) {
+    gst_video_alignment_reset (&pool->video_align);
+    gst_video_info_align (&pool->video_info, &pool->video_align);
+  }
+#endif
+  GST_DEBUG_OBJECT (pool, "PipeWire buffers now %s %dx%d (%" G_GSIZE_FORMAT " bytes)",
+      gst_video_format_to_string (GST_VIDEO_INFO_FORMAT (&pool->video_info)),
+      GST_VIDEO_INFO_WIDTH (&pool->video_info), GST_VIDEO_INFO_HEIGHT (&pool->video_info),
+      pool->video_info.size);
+  GST_OBJECT_UNLOCK (pool);
+}
+
+void gst_pipewire_pool_get_video_info (GstPipeWirePool *pool, GstVideoInfo *info)
+{
+  GST_OBJECT_LOCK (pool);
+  *info = pool->video_info;
+  GST_OBJECT_UNLOCK (pool);
+}
+
 void gst_pipewire_pool_set_paused (GstPipeWirePool *pool, gboolean paused)
 {
   GST_DEBUG_OBJECT (pool, "pause: %u", paused);
@@ -474,8 +504,11 @@ release_buffer (GstBufferPool * pool, GstBuffer *buffer)
   GstPipeWirePool *p = GST_PIPEWIRE_POOL (pool);
   g_autoptr (GstPipeWireStream) s = g_weak_ref_get (&p->stream);
 
-  GST_OBJECT_LOCK (pool);
+  /* Format/buffer callbacks already hold the PipeWire loop before taking
+   * the pool lock. Keep the same order when a streaming thread returns a
+   * buffer during renegotiation. */
   pw_thread_loop_lock (s->core->loop);
+  GST_OBJECT_LOCK (pool);
 
   if (!data->queued && data->b != NULL)
   {
@@ -489,8 +522,8 @@ release_buffer (GstBufferPool * pool, GstBuffer *buffer)
     }
   }
 
-  pw_thread_loop_unlock (s->core->loop);
   GST_OBJECT_UNLOCK (pool);
+  pw_thread_loop_unlock (s->core->loop);
 }
 
 static gboolean

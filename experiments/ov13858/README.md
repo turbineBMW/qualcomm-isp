@@ -9,6 +9,15 @@ The bounded experiment scripts do not install packages or replace the kernel.
 
 ## Findings
 
+- `mode-controls.patch` refreshes vertical blanking limits/defaults after sensor
+  mode configuration. Hardware regression on 2026-11-08 deliberately seeded
+  1056x784 (default blanking 2430), then opened the full-resolution ISP route.
+  With private libcamera `0.7.2-5`, 180 desktop frames completed without a worker
+  restart; 247 processed frames including idle grace stayed at 66,697 us exposure
+  and cleanup reported no errors. Before the fix exposure reached 115,566 us
+  and exceeded the adaptive runtime's metadata limit. Rear colour and wider
+  lighting qualification remain separate from this lifecycle/control check.
+
 - The sensor is OV13858, ACPI ID **MSHW0491**, with native GRBG RAW10. Its full
   mode is 4224x3136. IFE scales to 3840x2850 and crops at `(0,344)` to 3840x2160.
 - CSID 680 `CAMIF_FRAME_CFG`, register `0x330`, bits 26:24, selects the Bayer

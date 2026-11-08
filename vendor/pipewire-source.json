@@ -6,8 +6,10 @@
   "source_directory": "src/gst",
   "upstream_blob_manifest": "pipewire-gst/upstream.json",
   "modified_files": {
-    "gstpipewirepool.c": "bcf816880ac7e7811fc5a39668e78e8898de9d196b221646c98975aec254d65a",
-    "gstpipewiresink.c": "fb53ba59b92924ca40873356644c057f526d3647ef9afe15fce676912dc23806"
+    "gstpipewirepool.c": "24f0169f374bb5efbd66ff1c21265042325fb19fd459850b1119fcfde2c02992",
+    "gstpipewirepool.h": "f6aeb4ca4589e29289b4792c12a7fdb772ec8d616f8e4ceefc2d0f147ce83f97",
+    "gstpipewiresink.c": "896f9ac49158f229b08c4c529c2723b08a38d275c7950c3d16093179e6701578",
+    "gstpipewiresink.h": "6dc5274890f0be5ef2f5b0e9a19e22c943770b6e86d2e4bc43acd63cd5c38c83"
   },
-  "patch_sha256": "7265c112e1ebb631cfffef172ba42a757bd59ae0f135702c552d7f9f54332e3d"
+  "patch_sha256": "f8515cefdd98eae5466b5a470c12bcd689934ce3ab4d5bc4e501084310bb73e1"
 }
