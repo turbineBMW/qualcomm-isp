@@ -80,3 +80,44 @@ The fixed-temperature anchor and a repeated baseline reproduced identical
 output across independently seeded saved-input IPE replays. In the prepared
 scene, 5263 K and 6500 K programs also reproduced the baseline exactly. Adaptive
 colour remains experimental; the observed improvement came from Bayer ordering.
+
+## Rear denoising precision
+
+A saved normal-room frame exposed broad false-color contours. Chroma-denoising
+bypass removed most contours but added strong chroma noise. Moving the late
+color matrix earlier helped, but was not sufficient alone. An opt-in P010
+interior retains fractional denoised colors before late color/tone amplification
+and leaves ordinary NV12 display output compatible with existing clients.
+
+The ANR reserve extractor also had a four-byte offset error. The correct slice
+is 44:956: four 228-byte records, each beginning with a pass selector. The old
+48:964 slice shifted fields and included trailing descriptor metadata. The
+corrected extractor validates selectors and boolean flags for both supported
+sensors. Correcting this alone does not eliminate the contours.
+
+Prepare an opt-in rear bank with `preparation/prepare-precision-bank.py`, using
+`--assets` for a validated NV12 rear asset directory, `--tuning` for the exact
+OV13858 tuning, `--dll` and `--oracle` for the pinned DLL/loader, and `--output`
+for a new private directory. It preserves existing tone, CC/CV, TF and ASF
+programs, rebuilds corrected ten-bit ANR and striping for all 625 entries, and
+checks each entry's scratch requirement against a 6 MiB allocation. The bank
+manifest includes checksummed `precision.json` files and `precision:
+p010-internal`. Generated data is not redistributable source.
+
+Two display slots share one hardware input buffer: preparation expands each
+slot on the CPU, and submission writes the shared DMA input only after the
+previous synchronous hardware command completes. A P010 seed writes directly
+to a reference buffer. PD10 seed reduction preserves its fractional codes.
+These choices fit the existing reserved memory without a kernel change. A
+naive two-input implementation exhausted the pool and was rejected; cleanup
+succeeded before the lower-memory retry was authorized.
+
+Saved-frame and ramp comparisons use independent seeds, verified mapped versus
+debugfs readback, and repeated baselines. A 180-output live trial completed in
+7.20 seconds (about 25 fps including startup), with median frame age 62 ms and
+95th percentile 84 ms. A separate current-path baseline measured median 55 ms;
+lighting and duration differed, so this is not a controlled performance score.
+Large color patches are reduced, with residual shadow tint/banding still visible.
+The camera input remains NV12, and this is not a native ten-bit sensor pipeline.
+Early IFE color correction remains a separate uninstalled experiment pending
+highlight-accounting qualification. Sharpening strength has not been increased.

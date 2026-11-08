@@ -1,5 +1,31 @@
 # Initial source publication checks
 
+## Rear denoising precision, runtime 0.1-15 (2026-11-08)
+
+- Corrected the ANR reserve extraction by four bytes, retaining all four
+  serialized pass selectors. Preparation tests cover malformed selectors and
+  flags. Rebuilt a separate 625-entry rear bank with P010 input/references and
+  NV12 display, preserving tone, color, sharpening and temporal-filter programs.
+- Same-input hardware replays reduce broad purple/green contours. Reserve
+  correction alone is insufficient; retaining denoised chroma precision is the
+  material improvement. Residual shadow tint remains. Eight-bit input promotion
+  does not recover native sensor precision. Early IFE CCM remains experimental.
+- The initial two-input P010 allocation exceeded the dedicated memory pool and
+  cleaned up successfully. After explicit retry approval, the shared-input
+  implementation passed hardware replay and a 180-output adaptive live capture.
+  It retains two display slots and stages the next input in CPU memory.
+- Package checks passed: 58 unittest cases and six PD10 byte-identical checks;
+  preparation nine and color selection five tests also passed. All 625 bank
+  manifests validated. DLL scratch requirements fit the qualified 6 MiB limit.
+- Installed front/rear/front/cancelled-rear switching passed with first images
+  in 3.06/3.41/3.85/5.10 seconds. A desktop consumer received 90 native 4K frames
+  and saved a 3840x2160 PNG. This is not a Gaze frame-rate qualification.
+- Package integrity: 59 files, zero altered. Publishers and WirePlumber active;
+  ICP unloaded, runtime usage zero, temporary Bayer overrides empty, and no
+  matching kernel faults in the diagnostic interval. No new suspend test.
+- Rear configuration and previous asset selection are backed up locally. Front
+  remains on its existing NV12 bank; mild neutral rear shading is retained.
+
 ## Mild neutral rear shading, libcamera 0.7.2-6 (2026-11-08)
 
 - Added an opt-in, bounded neutral-LSC model for the rear RAW control algorithms.

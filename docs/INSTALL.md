@@ -5,6 +5,13 @@ This is currently a Surface Pro 11 Denali OLED profile on the verified
 firmware and DT qualification. Changing the profile does not make the Surface
 IPE program bank correct for another sensor.
 
+Runtime 0.1-15 also accepts an explicitly prepared rear `p010-internal` bank.
+It expands the existing NV12 camera input into P010, keeps denoising references
+at ten bits, and publishes ordinary NV12. This preserves fractional denoising
+results; it does not add sensor precision to the original eight-bit capture.
+Existing NV12 banks remain supported, including the front camera. See
+`docs/COLOUR-EXPERIMENTS.md` for preparation and qualification limits.
+
 ## Kernel
 
 `packaging/kernel` contains the co-installable `linux-omarchy-isp` recipe based

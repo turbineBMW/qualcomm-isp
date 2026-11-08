@@ -156,6 +156,9 @@ class Bank:
         self.path = Path(path).resolve()
         self.info = json.loads((self.path/'bank.json').read_text())
         r = self.info
+        precision = r.get('precision', 'nv12')
+        if precision not in ('nv12', 'p010-internal'):
+            raise ValueError('Unsupported bank precision')
         if (r['version'],r['width'],r['height']) != (1,3840,2176):
             raise ValueError('Unsupported IPE bank')
         self.tone_steps = len(r['tones'])
@@ -176,6 +179,8 @@ class Bank:
                         'gamma.bin','asf-luts.bin','dsx.bin','dsx-luts.bin',
                         'nps-anr-p0.bin','nps-anr-p1.bin','nps-anr-p2.bin',
                         'nps-tf-p0.bin','nps-tf-p1.bin'}
+            if precision == 'p010-internal':
+                required.add('precision.json')
             if set(entry['files']) != required:
                 raise ValueError('Incomplete bank file manifest')
             for name,expected in entry['files'].items():

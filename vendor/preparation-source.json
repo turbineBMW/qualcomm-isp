@@ -19,7 +19,8 @@
   "changes": {
     "build-entry.py": "Derived from parity-4k.py; explicit version-checked inputs, qualified 4K mode, local helpers and no capture probes.",
     "prepare.py": "New portable orchestrator preserving the qualified prepare-ipe-bank.py grid and metadata.",
-    "inputs.py": "Reconstructs protocol descriptors and extracts reserves/coefficients directly from owner tuning; replaces saved lab blobs.",
+    "inputs.py": "Reconstructs protocol descriptors and extracts reserves/coefficients directly from owner tuning; replaces saved lab blobs. ANR reserve extraction retains all four pass selectors and validates enable/dithering flags (912 bytes at descriptor offset 44).",
+    "prepare-precision-bank.py": "Opt-in rear P010 interior generator; preserves accepted color/tone/TF/ASF, recomputes corrected ten-bit ANR and striping, verifies bounded scratch and full bank checksums. No generated data distributed.",
     "parity-colour.py": "Portable colour extraction; now follows each CCM/CV lux branch's serialized CCT references instead of reusing the first CCM CCT selection across branches.",
     "prepare-colour-sets.py": "New experimental colour-only generator: validates the accepted bank's colour anchor and retains its sharpening command suffix verbatim.",
     "test-colour-selection.py": "Synthetic nested-reference and interpolation regression tests; no proprietary fixtures.",
