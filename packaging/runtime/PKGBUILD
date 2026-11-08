@@ -1,6 +1,6 @@
 pkgname=qualcomm-isp-runtime
 pkgver=0.1
-pkgrel=13
+pkgrel=16
 pkgdesc='Experimental Qualcomm ISP camera runtime with explicit board profiles'
 arch=('aarch64')
 license=('MIT')
@@ -9,7 +9,7 @@ depends=('python' 'python-numpy' 'python-gobject' 'gstreamer' 'gst-plugins-base'
 makedepends=('pkgconf' 'gcc' 'libpipewire')
 backup=('etc/qualcomm-isp/config.json')
 source=('qualcomm-isp-runtime.tar.gz')
-sha256sums=('1685aba9ce48d6c4ff5c2dec4fd8919b5d1443fa3cb16cb26b6da5529f556968')
+sha256sums=('dfa1eacaf6350df758580263bee6f35b125be12608c830f53c9e3c07ab6c9582')
 options=('!debug')
 build() {
   cd qualcomm-isp
@@ -23,6 +23,7 @@ check() {
   python -I test-session.py
   python -I test-ipe-capture-lease.py
   python -I test-pd10-fast.py
+  python -I test-ipe-precision.py
   python -I test-sleep.py
   python -I test-ipe-demand.py
 }
@@ -51,5 +52,6 @@ package() {
   install -Dm644 docs/PREPARE-BOARD-DATA.md "$pkgdir/usr/share/doc/qualcomm-isp/PREPARE-BOARD-DATA.md"
   install -Dm644 docs/INSTALL.md "$pkgdir/usr/share/doc/qualcomm-isp/INSTALL.md"
   install -Dm644 docs/PUBLISHER.md "$pkgdir/usr/share/doc/qualcomm-isp/PUBLISHER.md"
+  install -Dm644 docs/COLOUR-EXPERIMENTS.md "$pkgdir/usr/share/doc/qualcomm-isp/COLOUR-EXPERIMENTS.md"
   install -Dm644 docs/PROVENANCE.md "$pkgdir/usr/share/doc/qualcomm-isp/PROVENANCE.md"
 }

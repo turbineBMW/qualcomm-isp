@@ -35,6 +35,39 @@ import numpy as np
 SLOTS = 2
 
 
+def precision_layout(programs):
+    """Accept the existing NV12 path or an explicitly described P010 interior.
+
+    P010 keeps denoised colors at ten bits until display output. Its seed writes
+    directly into a reference buffer. Serialized submissions share one hardware
+    input; preparation for the other slot retains its expanded input on the CPU.
+    """
+    p = Path(programs)
+    cfg, seed = ((p / name).read_bytes() for name in ('cfg.bin', 'seed-cfg.bin'))
+    if len(cfg) != 5984 or len(seed) != 5984:
+        raise ValueError('Unexpected image configuration size')
+    if struct.unpack_from('<I', cfg)[0] == 20:
+        return 1, 8 << 20
+    metadata = json.loads((p / 'precision.json').read_text())
+    if metadata != {'mode': 'p010-internal', 'scratch_bytes': 6 << 20}:
+        raise ValueError('Unqualified precision configuration')
+    for config, seeding in ((cfg, False), (seed, True)):
+        for number in (0, 4, 8, 10):
+            fmt = 20 if number == 8 and not seeding else 19
+            off = number * 96
+            if struct.unpack_from('<3I', config, off) != (fmt, 3840, 2176):
+                raise ValueError('Unexpected P010 image format or dimensions')
+            stride = 3840 if fmt == 20 else 7680
+            if struct.unpack_from('<4I', config, off + 64) != (stride, 2176, stride, 1088):
+                raise ValueError('Unexpected P010 plane layout')
+    return 2, 6 << 20
+
+
+def expand_nv12(data):
+    """Preserve each eight-bit code exactly in MSB-aligned P010 storage."""
+    return (np.frombuffer(data, np.uint8).astype('<u2') << 8).tobytes()
+
+
 @contextmanager
 def program_environment(programs, full, overrides=None):
     saved = {k: v for k, v in os.environ.items() if k.startswith('ICP_')}
@@ -137,12 +170,14 @@ class Session:
         if (self.w, self.h) != (3840, 2176):
             raise ValueError('Only the verified padded native-4K configuration is supported')
         self.n = self.w * self.h * 3 // 2
+        self.internal_bytes, self.scratch_bytes = precision_layout(self.p)
         self.hd, self.full, self.sequence, self.previous = None, False, 0, 0
         self.buffers = []
         self.times = deque(maxlen=retain_times or None)
         self.failed = False
         self.config_count = 0
         self.lock = threading.RLock()
+        self.pending_inputs = [None] * SLOTS
         self.reducer = None
         if (HERE / 'pd10-fast.so').exists():
             lib = ctypes.CDLL(str(HERE / 'pd10-fast.so'))
@@ -152,10 +187,11 @@ class Session:
                                      ctypes.c_void_p, ctypes.c_size_t]
             self.reducer.restype = ctypes.c_int
         try:
-            self.inputs = [self.allocate(self.n) for _ in range(SLOTS)]
+            self.inputs = ([self.allocate(self.n * 2)] * SLOTS if self.internal_bytes == 2 else
+                           [self.allocate(self.n) for _ in range(SLOTS)])
             self.outputs = [self.allocate(self.n) for _ in range(SLOTS)]
-            self.references = [self.allocate(self.n), self.allocate(self.n)]
-            self.scratch = self.allocate(8 << 20)
+            self.references = [self.allocate(self.n * self.internal_bytes) for _ in range(2)]
+            self.scratch = self.allocate(self.scratch_bytes)
             self.cdm = self.allocate(1 << 20)
             self.iq = self.allocate(65536)
             self.pa = self.allocate(65536)
@@ -205,6 +241,8 @@ class Session:
         follows gain and tone.
         """
         p = Path(path).resolve()
+        if precision_layout(p) != (self.internal_bytes, self.scratch_bytes):
+            raise ValueError('Precision change requires a new session')
         overrides = {k: Path(v).resolve() for k, v in (overrides or {}).items()}
         for name, file in overrides.items():
             if name not in ('post.bin', 'pre-ltm.bin') or not file.is_file() or file.stat().st_size > 0x800:
@@ -339,7 +377,10 @@ class Session:
                 raise ValueError('Invalid padded NV12 frame length')
             view = memoryview(data)
             y, uv, valid = view[:plane], view[plane:], self.h
-            self.inputs[slot].write(view)
+            if self.internal_bytes == 2:
+                self.pending_inputs[slot] = expand_nv12(view)
+            else:
+                self.inputs[slot].write(view)
         else:
             y, uv = (memoryview(p) for p in planes)
             valid = y.nbytes // self.w
@@ -348,12 +389,24 @@ class Session:
                 raise ValueError('Plane sizes do not describe an even-height native frame')
             pad = self.h - valid
             target = self.inputs[slot]
-            target.write(y, 0)
-            if pad:
-                target.write(bytes(y[-self.w:]) * pad, self.w * valid)
-            target.write(uv, plane)
-            if pad:
-                target.write(bytes(uv[-self.w:]) * (pad // 2), plane + self.w * valid // 2)
+            if self.internal_bytes == 2:
+                padded = np.empty(self.n, dtype='<u2')
+                yy = padded[:plane].reshape(self.h, self.w)
+                uu = padded[plane:].reshape(self.h // 2, self.w)
+                yy[:valid] = np.frombuffer(y, np.uint8).reshape(valid, self.w)
+                uu[:valid // 2] = np.frombuffer(uv, np.uint8).reshape(valid // 2, self.w)
+                if pad:
+                    yy[valid:] = yy[valid - 1]
+                    uu[valid // 2:] = uu[valid // 2 - 1]
+                padded <<= 8
+                self.pending_inputs[slot] = padded.tobytes()
+            else:
+                target.write(y, 0)
+                if pad:
+                    target.write(bytes(y[-self.w:]) * pad, self.w * valid)
+                target.write(uv, plane)
+                if pad:
+                    target.write(bytes(uv[-self.w:]) * (pad // 2), plane + self.w * valid // 2)
         input_done = time.monotonic()
         need = tuple(f for f, packed in ((4, ds4), (16, ds16)) if packed is None)
         reduced = self.reduce(y, uv, valid, need) if need else {}
@@ -371,6 +424,14 @@ class Session:
             if self.failed:
                 raise RuntimeError('IPE session failed; restart required')
             start = time.monotonic()
+            if self.internal_bytes == 2:
+                payload = self.pending_inputs[slot]
+                if payload is None:
+                    raise ValueError('P010 input slot has not been prepared')
+                # The previous IPE_FRAME has returned before this write. The
+                # other preparation thread never touches the shared DMA input.
+                self.inputs[slot].write(payload)
+                self.pending_inputs[slot] = None
             frame = bytearray(self.frames[self.full])
             struct.pack_into('<I', frame, 0xa8, self.sequence + 1)
             struct.pack_into('<Q', frame, 0xac, time.monotonic_ns())
@@ -379,15 +440,20 @@ class Session:
                 struct.pack_into('<II', frame, 0xbc + number * 16, iova, iova if chroma is None else chroma)
 
             plane = self.w * self.h
-            image(ipeframe2.IN_FULL, self.inputs[slot].iova, self.inputs[slot].iova + plane)
-            image(ipeframe2.OUT_DISPLAY, self.outputs[slot].iova, self.outputs[slot].iova + plane)
+            internal_plane = plane * self.internal_bytes
+            current = 1 - self.previous
+            image(ipeframe2.IN_FULL, self.inputs[slot].iova, self.inputs[slot].iova + internal_plane)
+            if not self.full and self.internal_bytes == 2:
+                image(ipeframe2.OUT_DISPLAY, self.references[current].iova,
+                      self.references[current].iova + internal_plane)
+            else:
+                image(ipeframe2.OUT_DISPLAY, self.outputs[slot].iova, self.outputs[slot].iova + plane)
             image(1, self.pd.iova + self.pd_offsets[f'input4:{slot}'])
             image(2, self.pd.iova + self.pd_offsets[f'input16:{slot}'])
-            current = 1 - self.previous
             if self.full:
-                image(4, self.references[self.previous].iova, self.references[self.previous].iova + plane)
+                image(4, self.references[self.previous].iova, self.references[self.previous].iova + internal_plane)
                 image(5, self.pd.iova + self.pd_offsets[f'ref{self.previous}'])
-                image(10, self.references[current].iova, self.references[current].iova + plane)
+                image(10, self.references[current].iova, self.references[current].iova + internal_plane)
                 image(11, self.pd.iova + self.pd_offsets[f'ref{current}'])
             self.frame.write(frame)
             submit = time.monotonic()
@@ -410,36 +476,39 @@ class Session:
     def readback(self, token, height=None, destination=None):
         """Read the token's output; optionally only the first `height` rows.
 
-        Returns a bytearray (or fills `destination`) in NV12 order. A failed
+        Returns NV12 for display, or P010 for a ten-bit seed. A failed
         read poisons the session: the hardware advanced but CPU state did not.
         """
         slot = token['slot']
         rows = self.h if height is None else height
         if rows % 2 or not 0 < rows <= self.h:
             raise ValueError('Invalid readback height')
-        plane = self.w * self.h
-        size = self.w * rows * 3 // 2
+        seed_p010 = token['seed'] and self.internal_bytes == 2
+        stride = self.w * (2 if seed_p010 else 1)
+        plane = stride * self.h
+        luma_size = stride * rows
+        size = luma_size * 3 // 2
         if destination is None:
             destination = bytearray(size)
         elif memoryview(destination).nbytes != size:
             raise ValueError('Destination size does not match the readback')
         start = time.monotonic()
         try:
-            out = self.outputs[slot]
+            out = self.references[token['current']] if seed_p010 else self.outputs[slot]
             if self.readback_mode == 'read':
                 view = memoryview(destination)
-                view[:self.w * rows] = out.read(self.w * rows, 0)
-                view[self.w * rows:] = out.read(self.w * rows // 2, plane)
+                view[:luma_size] = out.read(luma_size, 0)
+                view[luma_size:] = out.read(luma_size // 2, plane)
             else:
-                out.read_mapped_into(destination, self.w * rows, 0, 0)
-                out.read_mapped_into(destination, self.w * rows // 2, plane, self.w * rows)
+                out.read_mapped_into(destination, luma_size, 0, 0)
+                out.read_mapped_into(destination, luma_size // 2, plane, luma_size)
             read_done = time.monotonic()
             verify_ms = 0
             if self.readback_mode == 'verify':
                 check = bytearray(size)
                 view = memoryview(check)
-                view[:self.w * rows] = out.read(self.w * rows, 0)
-                view[self.w * rows:] = out.read(self.w * rows // 2, plane)
+                view[:luma_size] = out.read(luma_size, 0)
+                view[luma_size:] = out.read(luma_size // 2, plane)
                 if destination != check:
                     raise RuntimeError('Mapped DMA read differs from debugfs read')
                 verify_ms = (time.monotonic()-read_done)*1000
@@ -459,14 +528,23 @@ class Session:
         if token['seed']:
             if self.failed:
                 raise RuntimeError('IPE session failed; restart required')
-            if result is None or len(result) != self.n:
+            if result is None or len(result) != self.n * self.internal_bytes:
                 result = self.readback(token)
             with self.lock:
                 current = token['current']
                 view = memoryview(result)
                 plane = self.w * self.h
-                self.references[current].write(view)
-                self.pd.write(self.reduce(view[:plane], view[plane:], self.h, (4,))[4], self.pd_offsets[f'ref{current}'])
+                if self.internal_bytes == 2:
+                    # The seed already resides in this reference. Preserve its
+                    # fractional codes when constructing the PD10 reference.
+                    samples = np.frombuffer(view, '<u2').astype(np.float32) / 256
+                    yy, uv, dw, dh = pd10.downscale(samples, self.w, self.h, 4)
+                    _, _, stride, sh = pd10.dims(self.w, self.h, 4)
+                    reduced = pd10.encode(yy, uv, dw, dh, stride, sh)
+                else:
+                    self.references[current].write(view)
+                    reduced = self.reduce(view[:plane], view[plane:], self.h, (4,))[4]
+                self.pd.write(reduced, self.pd_offsets[f'ref{current}'])
                 reference_done = time.monotonic()
                 self.configure(True)
         t = token['times']

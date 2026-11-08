@@ -92,7 +92,7 @@ def main():
         run('media-ctl', '-d', media, '-r')
         run('v4l2-ctl', '-d', sensor, '--set-ctrl=test_pattern=0')
         # Emulate the compiled CSID patch on the already installed kernel.
-        param.write_text('0x330=0x3000000\n')
+        param.write_text('0x330=0x1000000\n')
         run('modprobe', 'qcom_camss_icp')
         loaded = True
         spec = importlib.util.spec_from_file_location('rear_ipe', '/usr/lib/qualcomm-isp/ipe-stream.py')

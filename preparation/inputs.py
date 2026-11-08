@@ -47,6 +47,27 @@ def descriptor(chrom, name, selector, size):
     return matches[0]
 
 
+def anr_reserve(blob):
+    """Extract four serialized pass records, including each pass selector.
+
+    The native setting function advances by 228 bytes and skips the selector
+    inside each record. Starting at the first enable flag shifts every field
+    and feeds the next pass selector to the chroma-dithering setting.
+    """
+    if len(blob) != 964:
+        raise ValueError('Unexpected ANR descriptor size')
+    reserve = blob[44:956]
+    for index in range(4):
+        base = index * 228
+        if struct.unpack_from('<I', reserve, base)[0] != index:
+            raise ValueError('Unexpected ANR pass selector')
+        flags = struct.unpack_from('<2I', reserve, base + 4)
+        dithering = struct.unpack_from('<2I', reserve, base + 220)
+        if any(value not in (0, 1) for value in (*flags, *dithering)):
+            raise ValueError('Invalid ANR enable/dithering flags')
+    return reserve
+
+
 def config(width, height, seed=False):
     """API 2.52 image descriptors: full input/reference/display and PD10 pyramids."""
     result = bytearray(5984)
@@ -93,7 +114,7 @@ def prepare(tuning, destination, sensor='imx681'):
     destination.mkdir(parents=True, exist_ok=False)
     coefficients = descriptor(chrom, 'ds4to1v11_ipe', 4, 88)[28:40]
     data = {
-        'anr-reserve.bin': descriptor(chrom, 'anr10_ipe_v2', 4, 964)[48:964],
+        'anr-reserve.bin': anr_reserve(descriptor(chrom, 'anr10_ipe_v2', 4, 964)),
         # Preserve selector 157 used by the accepted bank. It differs from
         # selector 4 at the trailing descriptor word; do not silently substitute.
         'tf-reserve.bin': descriptor(chrom, 'tf21_ipe_v2', layout['tf_selector'], 396)[68:396],

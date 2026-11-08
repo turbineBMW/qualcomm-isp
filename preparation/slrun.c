@@ -747,7 +747,7 @@ int main(int argc, char **argv) {
     }
 
     if (!strcmp(argv[2], "anr")) {
-        /* slrun <dll> anr <region.bin (n x 0x870)> <reserve.bin (4 + n x 0xe4)> <npasses> <w> <h> <bits> <regs.out> <fw.out> <chromatix.out>
+        /* slrun <dll> anr <region.bin (n x 0x870)> <reserve.bin (n x 0xe4, including pass selectors)> <npasses> <w> <h> <bits> <regs.out> <fw.out> <chromatix.out>
          * ANR101Setting::CalculateHWSetting (fn 0x999480: pInput, pUnpacked, pReserve, pModuleEnable) scales the threshold
          * tables by pInput's per-pass scale/offset floats and maps region+reserve into NcLib ANR_Chromatix (0x954/pass, kona
          * ANR_Chromatix.h layout) at pInput+0x98. ANR_FlowProcessNcLib680 (fn 0xf3d8a0: chromatix, ctx, regs, fw, n, w, h,

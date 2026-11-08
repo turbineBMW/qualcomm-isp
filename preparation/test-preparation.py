@@ -11,12 +11,42 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from inputs import DLL_SHA256, require_identity, load
+from inputs import DLL_SHA256, require_identity, load, anr_reserve
 from prepare import validate_request
 comparison = load('compare-assets')
 
 
 class PreparationChecks(unittest.TestCase):
+    def anr_descriptor(self):
+        data = bytearray([0xa5] * 964)
+        for index in range(4):
+            base = 44 + 228 * index
+            struct.pack_into('<3I', data, base, index, 1, 0)
+            struct.pack_into('<2I', data, base + 220, 0, 1)
+        return data
+
+    def test_anr_reserve_retains_pass_selectors_and_last_dithering_flag(self):
+        data = self.anr_descriptor()
+        reserve = anr_reserve(data)
+        self.assertEqual(len(reserve), 912)
+        for index in range(4):
+            self.assertEqual(struct.unpack_from('<3I', reserve, 228 * index), (index, 1, 0))
+            self.assertEqual(struct.unpack_from('<2I', reserve, 228 * index + 220), (0, 1))
+        self.assertEqual(reserve[-4:], struct.pack('<I', 1))
+
+    def test_anr_reserve_rejects_shifted_records_and_invalid_flags(self):
+        data = self.anr_descriptor()
+        shifted = data[:44] + data[48:] + bytes(4)
+        with self.assertRaisesRegex(ValueError, 'pass selector'):
+            anr_reserve(shifted)
+        for offset in (44 + 4, 44 + 228 + 224):
+            invalid = bytearray(data)
+            struct.pack_into('<I', invalid, offset, 2)
+            with self.assertRaisesRegex(ValueError, 'flags'):
+                anr_reserve(invalid)
+        with self.assertRaisesRegex(ValueError, 'size'):
+            anr_reserve(data[:-4])
+
     def test_wrong_driver_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / 'camera.dll'

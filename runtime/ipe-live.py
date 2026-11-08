@@ -478,6 +478,8 @@ def main():
                    help='Sensor digital gain the RAW AE may add after analogue gain is exhausted (1.0 = none; 3 balances brightness against chroma noise)')
     p.add_argument('--save-raw', action='store_true', help='Retain RAW requests 58/59 for statistics validation')
     p.add_argument('--save-every', type=int, default=0, help='Also save every Nth published output for inspection')
+    p.add_argument('--save-input-every', type=int, default=0,
+                   help='Diagnostic: retain pre-IPE NV12 for sensor sequences divisible by N and their matching outputs; adds disk I/O')
     p.add_argument('--save-switches', type=int, default=0, help='Save the first output after each of the first N program switches')
     p.add_argument('--reseed-on-program-switch', action='store_true',
                    help='Run a seed pass after every program switch (the earlier behaviour) instead of keeping temporal history')
@@ -491,7 +493,7 @@ def main():
                    help='Keep only the newest N per-frame records in memory/report (0 = all; daemon sessions use a bound)')
     p.add_argument('--quiet', action='store_true', help='Log every 300th frame and no per-command HFI lines (daemon sessions)')
     a = p.parse_args()
-    if not 0 <= a.seconds <= 7200 or not 0 <= a.frames <= 300000 or a.save_every < 0 or a.save_switches < 0:
+    if not 0 <= a.seconds <= 7200 or not 0 <= a.frames <= 300000 or a.save_every < 0 or a.save_switches < 0 or a.save_input_every < 0:
         raise ValueError('Trial duration must be 0..7200 seconds (0 = until stopped) and frame limit 0..300000')
     external = None
     if a.handoff_fds:
@@ -662,6 +664,10 @@ def main():
                 with capture.planes(frame) as (y, uv):
                     prepared = session.prepare(slot, planes=(y, uv))
                     input_luma = adaptive.luma(y) if adaptive else None
+                    if a.save_input_every and frame['sequence'] % a.save_input_every == 0:
+                        with (out/f'input-seq{frame["sequence"]}.nv12').open('xb') as saved:
+                            saved.write(y)
+                            saved.write(uv)
             finally:
                 capture.release(frame)
             frame = {k: v for k, v in frame.items() if k != 'data'}
@@ -679,6 +685,8 @@ def main():
                 (out/'first-output.nv12').write_bytes(data)
             if a.save_every and count % a.save_every == 0:
                 (out/f'output-{count:05d}-seq{frame_meta["sequence"]}.nv12').write_bytes(data)
+            if a.save_input_every and frame_meta['sequence'] % a.save_input_every == 0:
+                (out/f'matched-output-seq{frame_meta["sequence"]}.nv12').write_bytes(data)
             if item.get('save_switch'):
                 (out/f'switch-{item["save_switch"]:02d}-seq{frame_meta["sequence"]}.nv12').write_bytes(data)
             publish_started = time.monotonic_ns()

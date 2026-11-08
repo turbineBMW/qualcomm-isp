@@ -45,6 +45,31 @@
       "modified_files": {
         "src/libcamera/pipeline/camss/camss_isp_inline.cpp": "d896e6f0a6957414f8b96079cc9ede6034fab410966f6015b4f1ff054c022f70"
       }
+    },
+    {
+      "path": "experiments/shading/neutral-lsc.patch",
+      "sha256": "63438742acd81d541b47fd66868bf903dbcf4ff1f576dcac06d48dc39226d52d",
+      "description": "Opt-in mild neutral rear shading with matching RAW AE/AWB statistics; native diagnostic RAW histograms preserved",
+      "modified_files": {
+        "src/libcamera/pipeline/camss/camss_lsc_stats.h": "b8aa3c0602e28a0e62d9652ea95590927bf267ce74fae6cc33cb2cc34be86cf2",
+        "src/libcamera/pipeline/camss/camss_raw_stats.h": "94fe8716dbceb715ab38064832185e260d342ff4273d22d7eba84a00a8816aba",
+        "src/libcamera/pipeline/camss/camss_raw_stats.cpp": "06211dd558c312b72b73d6a35b490144691169f1552607f135828b472697a391",
+        "src/libcamera/pipeline/camss/camss_isp_inline.h": "9cc6f9bc71a3fb2ccdf9d2eed854201bcec8cad7930703f6c4d2d92197b7a7e4",
+        "src/libcamera/pipeline/camss/camss_isp_inline.cpp": "996cd7f3313e8e26d446f606837cfb162c7d4113dc654abc5cff35619fd39652"
+      }
+    },
+    {
+      "path": "experiments/colour/early-ccm.patch",
+      "sha256": "39315304e381a06710a26a3173deb160d8c39906197b2764136477be15b76a04",
+      "description": "Rear joint-sample early CCM highlight model; consistent sensor headroom and clipping percentile; WB callback before color analysis",
+      "modified_files": {
+        "src/libcamera/pipeline/camss/camss_ccm_stats.h": "6cb3118c66c98cefc4402f75c3b3a7fd78254a9a4f2bcb7184a7e5c875949a38",
+        "src/libcamera/pipeline/camss/camss_highlight_ae.h": "b4de59c62fa9c317f8373176d26381f406f33ffc6c44090a0747fca7f1540440",
+        "src/libcamera/pipeline/camss/camss_raw_stats.h": "3fb04888f8371ca16af1752971645964160398eab16d367622febb52f6b2c243",
+        "src/libcamera/pipeline/camss/camss_raw_stats.cpp": "98de0a024c730276ce91cad7f01ed9742ee5ec71125b857ebcf97fbf4d8ae17c",
+        "src/libcamera/pipeline/camss/camss_isp_inline.h": "1963aef461b0a1cebd7051b0183ee3ccd762494731e8b2608f9cec8bd7d3d250",
+        "src/libcamera/pipeline/camss/camss_isp_inline.cpp": "14807609313d99f92bf7d40a065de7d8fbf2919b68d7ab56ed4588792316c4e3"
+      }
     }
   ]
 }

@@ -5,6 +5,13 @@ This is currently a Surface Pro 11 Denali OLED profile on the verified
 firmware and DT qualification. Changing the profile does not make the Surface
 IPE program bank correct for another sensor.
 
+Runtime 0.1-15 also accepts an explicitly prepared rear `p010-internal` bank.
+It expands the existing NV12 camera input into P010, keeps denoising references
+at ten bits, and publishes ordinary NV12. This preserves fractional denoising
+results; it does not add sensor precision to the original eight-bit capture.
+Existing NV12 banks remain supported, including the front camera. See
+`docs/COLOUR-EXPERIMENTS.md` for preparation and qualification limits.
+
 ## Kernel
 
 `packaging/kernel` contains the co-installable `linux-omarchy-isp` recipe based
@@ -158,11 +165,16 @@ available during this migration.
 ## Experimental OV13858 rear ISP
 
 The rear path has been tested on this Denali OLED with the existing qualified
-lab kernel. Use private libcamera package `0.7.2-5` and runtime `0.1-13`
+lab kernel. Use private libcamera package `0.7.2-5` and runtime `0.1-14`
 or later. It uses the kernel's temporary native-GRBG register override, restored
 when the session ends; the source CSID fix still needs a kernel build and boot
 qualification. See [the experiment](../experiments/ov13858/README.md) for input
 hashes, geometry, frame association and measured results.
+
+Runtime `0.1-14` corrects the rear Bayer selector from 3 to 1. Earlier rear
+runtime versions invert red and blue before white balance. The correction was
+verified against sequence-matched real-scene RAW and pre-IPE NV12, independently
+of colour-temperature tuning.
 
 Generate a separate local bank with `preparation/prepare.py --sensor ov13858`,
 using the exact rear tuning file and DLL described there. Import it with

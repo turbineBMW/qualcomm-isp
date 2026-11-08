@@ -19,8 +19,14 @@
   "changes": {
     "build-entry.py": "Derived from parity-4k.py; explicit version-checked inputs, qualified 4K mode, local helpers and no capture probes.",
     "prepare.py": "New portable orchestrator preserving the qualified prepare-ipe-bank.py grid and metadata.",
-    "inputs.py": "Reconstructs protocol descriptors and extracts reserves/coefficients directly from owner tuning; replaces saved lab blobs.",
+    "inputs.py": "Reconstructs protocol descriptors and extracts reserves/coefficients directly from owner tuning; replaces saved lab blobs. ANR reserve extraction retains all four pass selectors and validates enable/dithering flags (912 bytes at descriptor offset 44).",
+    "prepare-precision-bank.py": "Opt-in rear P010 interior generator; preserves accepted color/tone/TF/ASF, recomputes corrected ten-bit ANR and striping, verifies bounded scratch and full bank checksums. No generated data distributed.",
+    "parity-colour.py": "Portable colour extraction; now follows each CCM/CV lux branch's serialized CCT references instead of reusing the first CCM CCT selection across branches.",
+    "prepare-colour-sets.py": "New experimental colour-only generator: validates the accepted bank's colour anchor and retains its sharpening command suffix verbatim.",
+    "test-colour-selection.py": "Synthetic nested-reference and interpolation regression tests; no proprietary fixtures.",
     "slrun.c": "Added exact DLL hash enforcement and explicit extracted DS4 coefficients; retains observed ABI offsets and original loader/call code.",
-    "other_helpers": "Portable imports/arguments and MIT SPDX notices; original calculation/packing logic retained."
+    "other_helpers": "Portable imports/arguments and MIT SPDX notices; original calculation/packing logic retained.",
+    "prepare-early-colour.py": "Opt-in validated rear P010 bank conversion: exact source CCM moved before IFE gamma, late CCM unity, joint RAW highlight model required, all other programs preserved; generated owner assets remain local.",
+    "prepare-motion-bank.py": "Opt-in rear P010 early-color bank conversion: disables temporal-filter pass enables and regenerates full striping within the qualified scratch bound; preserves seed, spatial denoising, color, tone and sharpening. Generated owner assets remain local."
   }
 }

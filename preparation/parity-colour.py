@@ -59,6 +59,69 @@ def blend(values, selection):
     return [a * (1 - ratio) + b * ratio for a, b in zip(values[lo], values[hi])]
 
 
+def select_colour(c, module, lux_rows, fields, cct, lux_index):
+    """Follow each lux branch's own CCT references in the qualified base tree.
+
+    Upper controls are singleton branches in both supported sensor files.
+    CCM and CV may have different CCT intervals, including between lux rows.
+    Serialized child/region references are zero-based parameter IDs.
+    """
+    if not all(math.isfinite(v) for v in (cct, lux_index)) or cct <= 0:
+        raise ValueError('Invalid colour trigger input')
+    controls = next(p for p in module if p[0] == 'control_var_type')
+    if c.data(controls[1], controls[2]) != struct.pack('<5I', 2, 5, 100, 0, 6):
+        raise ValueError('Unsupported colour trigger axes')
+    byid = {p[3]: p for p in module}
+    root = next(p for p in module if p[0].startswith('mod_'))
+    shape = (1, 1, 1, lux_rows, 4)
+    decisions, weights = [], {}
+
+    def read(part, depth):
+        if part[2] != shape[depth] * 24:
+            raise ValueError('Unexpected colour trigger count')
+        nodes = []
+        previous = -math.inf
+        for start, end, count, child_id, has_region, region_id in struct.iter_unpack('<ffIIII', c.data(part[1], part[2])):
+            if not all(math.isfinite(v) for v in (start, end)) or start > end or start <= previous:
+                raise ValueError('Invalid colour trigger intervals')
+            previous = end
+            child, region = byid[child_id + 1], byid[region_id + 1]
+            node = dict(interval=(start, end))
+            if depth == 4:
+                if count or has_region != 1 or child[2] or region[0] != 'region' or region[2] != fields * 4:
+                    raise ValueError('Invalid colour leaf reference')
+                values = struct.unpack('<%df' % fields, c.data(region[1], region[2]))
+                if not all(math.isfinite(v) for v in values):
+                    raise ValueError('Nonfinite colour coefficient')
+                node.update(values=values, region_id=region[3])
+            else:
+                if count != shape[depth + 1] or has_region or region[2] or child[0] != 'trigger':
+                    raise ValueError('Invalid colour child reference')
+                node['children'] = read(child, depth + 1)
+            nodes.append(node)
+        return nodes
+
+    def visit(nodes, depth, path, weight):
+        selection = choose([n['interval'] for n in nodes], lux_index if depth == 3 else cct) if depth >= 3 else (0, 0, 0.0)
+        lo, hi, ratio = selection
+        if depth >= 3:
+            decisions.append(dict(path=path, axis='lux_index' if depth == 3 else 'cct',
+                                  intervals=[n['interval'] for n in nodes], selection=selection))
+        values = []
+        for index, factor in ([(lo, 1.0)] if lo == hi else [(lo, 1 - ratio), (hi, ratio)]):
+            node = nodes[index]
+            if depth == 4:
+                values.append(node['values'])
+                key = str(node['region_id'])
+                weights[key] = weights.get(key, 0.0) + weight * factor
+            else:
+                values.append(visit(node['children'], depth + 1, path + [index], weight * factor))
+        return list(values[0]) if lo == hi else blend(values, (0, 1, ratio))
+
+    result = visit(read(root, 0), 0, [], 1.0)
+    return result, dict(decisions=decisions, leaf_weights=weights)
+
+
 def round_hw(x):
     return math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)
 
@@ -127,16 +190,10 @@ def main():
     c = Chromatix(a.chromatix)
     layout = identify(c.f)[1]
     ccmod, gammod, cvmod = [get_module(c, n, k) for n, k in [('cc13', 2), ('gamma15', 2), ('cv12', 0)]]
-    ccsel = choose(triggers(c, ccmod, 4), a.cct)
     gsel = choose(triggers(c, gammod, layout['gamma_rows']), a.lux_index)
-    cvsel = choose(triggers(c, cvmod, layout['cv_rows']), a.lux_index)
-    matrices = regions(c, ccmod)
-    matrix = blend(matrices, ccsel) if layout['cc_rows'] == 1 else blend(
-        [blend(matrices[i * 4:(i + 1) * 4], ccsel) for i in range(layout['cc_rows'])],
-        choose(triggers(c, ccmod, layout['cc_rows']), a.lux_index))
+    matrix, ccsel = select_colour(c, ccmod, layout['cc_rows'], 12, a.cct, a.lux_index)
     gamma = blend(regions(c, gammod), gsel)
-    cvs = regions(c, cvmod)
-    cv = blend([blend(cvs[i * 4:(i + 1) * 4], ccsel) for i in range(layout['cv_rows'])], cvsel)
+    cv, cvsel = select_colour(c, cvmod, layout['cv_rows'], 14, a.cct, a.lux_index)
     pre, cstmatrix = cst(c)
     iq = bytearray(a.iq.read_bytes())
     if len(iq) != 0x1834:
@@ -155,7 +212,7 @@ def main():
         (a.outdir / name).write_bytes(data)
     report = dict(source_sha256=hashlib.sha256(c.f).hexdigest(), input_colour=a.input_colour,
                   cct=a.cct, lux_index=a.lux_index, cc_selection=ccsel, gamma_selection=gsel,
-                  cv_lux_selection=cvsel, cc=matrix, cv=cv, cst_matrix=cstmatrix,
+                  cv_selection=cvsel, cc=matrix, cv=cv, cst_matrix=cstmatrix,
                   ltm='not enabled; this file uses ltm16, not ltm13',
                   note='CCT/lux are explicit experimental inputs, not measured frame metadata')
     (a.outdir / 'selection.json').write_text(json.dumps(report, indent=2) + '\n')

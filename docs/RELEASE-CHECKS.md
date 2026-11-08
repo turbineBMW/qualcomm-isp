@@ -1,5 +1,134 @@
 # Initial source publication checks
 
+## Rear motion rendering, runtime 0.1-16 (2026-11-08)
+
+- A moving hand and charger showed multiple old outlines after IPE processing
+  even at 16,653 us exposure. Replaying 25 identical ordered saved inputs with
+  independent seeds isolated temporal filtering: bypassing its pass enables
+  removed the outlines, at the expense of more visible grain. Sparse saved
+  inputs establish causality, not normal desktop ghosting magnitude.
+- The new opt-in rear preparation builds 625 validated entries from the P010
+  early-color bank. Only TF enables and full striping change; seed programs,
+  spatial ANR, CC/CV, tone, sharpening, IFE and AWB data are preserved. Scratch
+  requirements remain within 6 MiB. Factory motion-aware TF integration remains
+  unqualified; this bypass does not establish a defect in the factory algorithm.
+- Rear worker policy now keeps the nominal 1/30-second frame period instead of
+  extending toward 1/15 s. A 300-output automatic trial with the complete new
+  bank finished in 12.05 s, settling at 33,307 us and maximum reported analogue
+  gain. Final 60 weighted-luma values were 139.50–140.87 in warm indoor light.
+  Low-light noise and fast-subject blur remain; front policy is unchanged.
+- Runtime package checks passed 58 unit tests and six PD10 comparisons. After
+  installation, the desktop path delivered 90 frames at 3840x2160; the worker
+  report confirmed the new bank, slow-frame 1.0 and 33,307 us exposure.
+- Front/rear/front/cancelled-rear switching passed with first-image times
+  2.82/3.27/3.40/2.54 s. Package integrity reported runtime59/libcamera84 files,
+  zero altered. Both publishers and WirePlumber stayed active, ICP unloaded,
+  runtime usage returned to zero and no matching kernel faults were observed.
+- Runtime 0.1-16 and libcamera 0.7.2-7 are installed on the test machine, with
+  prior rear assets/configuration preserved for rollback. Generated owner
+  assets and reference photographs remain private. No new suspend test.
+
+## Early rear color and exposure convergence, libcamera 0.7.2-7 (2026-11-08)
+
+- Joint rear RAW samples model the pre-gamma color matrix's highlight envelope,
+  supplementing sensor/WB protection. The model uses recorded frame WB and the
+  driver's coefficient quantization; unsupported offsets or missing samples
+  fail closed. Native diagnostic histograms and AWB domains are preserved.
+- Peak percentiles now respect clipping budgets, and sensor headroom accounts
+  for black64. A synthetic scene that previously oscillated now converges.
+  Rear WB callbacks precede color analysis to retain their freshness budget.
+- Fixed-control and adaptive four-object captures passed. Old live exposure
+  varied roughly 31,073–45,537 over its final 60 frames; one new trial held
+  36,430, and a subsequent complete-bank trial varied 38,511–40,593. WB settled
+  and tone reached 8x. Early correction reduced the gray object's purple cast.
+  These are successive captures under daylight, not identical sensor frames.
+- All 625 generated post programs match the qualified override trial; every
+  other bank file is unchanged. Both saved RAW histograms match native data.
+  Package checks run CCM/highlight convergence, neutral-LSC and front/rear
+  sampling regressions. Reconstruction matches all 18 source hashes.
+- Front 120-output and rear 240-output trials passed. Installed desktop
+  front/rear/front/cancelled-start checks passed at 2.15/3.06/3.57/5.00 seconds.
+  Integrity checks report libcamera 84 and runtime 59 files, zero altered.
+- Installed desktop capture delivered 90 frames at 3840x2160. Both publishers
+  and WirePlumber were active afterward; ICP unloaded, runtime usage zero and
+  temporary Bayer override empty. No matching kernel faults in the interval.
+- Runtime remains 0.1-15; no kernel, Gaze or sharpening change. Additional lighting
+  conditions and a new suspend cycle remain unqualified. See the
+  [model, evidence and rollback](../experiments/colour/README.md).
+
+Warm overhead follow-up: 300 diagnostic outputs passed. Final 90 frames held
+exposure at 64,318 us/gain8; output-luma spread was below 0.5%, with stable WB.
+Both saved RAW histograms matched. The desktop path delivered 180 native-4K
+frames; its centre-priority policy used about 1/15 s and gain18.38. A fixed-control
+pair compared the existing early matrix to the factory 4100 K region without a
+clear overall win, so the installed profile stayed unchanged. Whites looked
+near neutral; red remained pinker and fabric texture softer than the phone.
+This qualifies one warm overhead scene, not all spectra, mains flicker or motion.
+
+## Rear denoising precision, runtime 0.1-15 (2026-11-08)
+
+- Corrected the ANR reserve extraction by four bytes, retaining all four
+  serialized pass selectors. Preparation tests cover malformed selectors and
+  flags. Rebuilt a separate 625-entry rear bank with P010 input/references and
+  NV12 display, preserving tone, color, sharpening and temporal-filter programs.
+- Same-input hardware replays reduce broad purple/green contours. Reserve
+  correction alone is insufficient; retaining denoised chroma precision is the
+  material improvement. Residual shadow tint remains. Eight-bit input promotion
+  does not recover native sensor precision. Early IFE CCM remains experimental.
+- The initial two-input P010 allocation exceeded the dedicated memory pool and
+  cleaned up successfully. After explicit retry approval, the shared-input
+  implementation passed hardware replay and a 180-output adaptive live capture.
+  It retains two display slots and stages the next input in CPU memory.
+- Package checks passed: 58 unittest cases and six PD10 byte-identical checks;
+  preparation nine and color selection five tests also passed. All 625 bank
+  manifests validated. DLL scratch requirements fit the qualified 6 MiB limit.
+- Installed front/rear/front/cancelled-rear switching passed with first images
+  in 3.06/3.41/3.85/5.10 seconds. A desktop consumer received 90 native 4K frames
+  and saved a 3840x2160 PNG. This is not a Gaze frame-rate qualification.
+- Package integrity: 59 files, zero altered. Publishers and WirePlumber active;
+  ICP unloaded, runtime usage zero, temporary Bayer overrides empty, and no
+  matching kernel faults in the diagnostic interval. No new suspend test.
+- Rear configuration and previous asset selection are backed up locally. Front
+  remains on its existing NV12 bank; mild neutral rear shading is retained.
+
+## Mild neutral rear shading, libcamera 0.7.2-6 (2026-11-08)
+
+- Added an opt-in, bounded neutral-LSC model for the rear RAW control algorithms.
+  The default remains off. Non-neutral meshes, gains above 1.25 and nonlinear
+  response remain unsupported with RAW AE/AWB; front keeps its existing guard.
+- Hardware off/unity/mild trials passed at fixed controls. A smooth mesh capped
+  at 1.2 lifted sampled outer regions roughly 7–10% in linearized pre-IPE values,
+  while center changed below 1%. No per-channel color correction was fitted.
+- Adaptive capture passed; saved native RAW and diagnostic histograms still
+  agree exactly. Package source reconstruction matches all 17 provenance hashes;
+  the model regression passed during package build. Installed libcamera84files
+  and runtime58files both report zero altered files.
+- Installed desktop front/rear/front/cancelled-start regression passed with
+  first frames in 5.13/3.07/3.31/2.25 seconds. Local rear tuning is a separate,
+  backed-up profile; imported assets and package-owned profiles are intact.
+- See [model and qualification limits](../experiments/shading/README.md).
+
+## Rear colour correction, runtime 0.1-14 (2026-11-08)
+
+- Corrected native GRBG selector 3 → 1 after paired real-scene RAW/pre-IPE
+  comparison proved a red/blue inversion before white balance. Independent
+  red-only/blue-only gain trials verified control identity. The original sensor
+  color-bar interpretation did not establish real-scene identity.
+- Three bounded 180-frame diagnostic captures completed with clean teardown.
+  Both saved-input color replay comparisons used one allocation set and passed
+  35 submissions each; fixed-temperature and repeated baselines were identical.
+  The first historical replay attempt exposed a test-harness reallocation error;
+  cleanup succeeded, the user approved the corrected retry, and it passed.
+- Package check phase passed 52 lifecycle/transport/demand tests and six PD10
+  comparisons. Installed runtime has 58 files and zero alterations. Desktop
+  front/rear/front and cancelled rear startup passed with first images in
+  2.13/3.00/3.67/2.56 seconds. Existing camera assets and firmware remain intact.
+- Added opt-in paired pre/post-IPE frame retention for bounded diagnostics;
+  disabled by default. Fixed preparation's branch-specific CCM/CV CCT selection;
+  five synthetic regressions and seven existing preparation checks pass.
+- Broader lighting, unit calibration/shading, Windows still-capture parity and
+  suspend/resume remain separate qualifications. Optional CCT sets remain off.
+
 ## Gaze switching follow-up, runtime 0.1-13 (2026-11-08)
 
 - User acceptance found black viewfinders when switching front -> rear ->

@@ -24,7 +24,7 @@ index 052236cc8956..79c1412835d5 100644
  	u8 lines;
  };
  
-+/* Pixel pattern forwarded from CSID to IFE; measured with RAW10 colour bars.
++/* Pixel pattern forwarded to IFE; GRBG verified against paired real RAW10.
 + * Use the source format, which already accounts for the legacy GBRG row crop.
 + */
 +static u32 csid_ipp_pixel_pattern(u32 code)
@@ -34,7 +34,7 @@ index 052236cc8956..79c1412835d5 100644
 +	case MEDIA_BUS_FMT_SGBRG10_1X10:
 +	case MEDIA_BUS_FMT_SGBRG12_1X12:
 +	case MEDIA_BUS_FMT_SGBRG14_1X14:
-+		return 1;
++		return 3;
 +	case MEDIA_BUS_FMT_SBGGR8_1X8:
 +	case MEDIA_BUS_FMT_SBGGR10_1X10:
 +	case MEDIA_BUS_FMT_SBGGR12_1X12:
@@ -44,7 +44,7 @@ index 052236cc8956..79c1412835d5 100644
 +	case MEDIA_BUS_FMT_SGRBG10_1X10:
 +	case MEDIA_BUS_FMT_SGRBG12_1X12:
 +	case MEDIA_BUS_FMT_SGRBG14_1X14:
-+		return 3;
++		return 1;
 +	default:
 +		return 0;
 +	}
