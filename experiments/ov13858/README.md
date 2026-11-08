@@ -1,7 +1,7 @@
 # OV13858 rear-camera ISP experiment
 
 First hardware proof on Surface Pro 11 Denali OLED, 2026-10-17: the rear camera
-produces correctly ordered 3840x2160 NV12 through IFE, and those frames pass
+produces 3840x2160 NV12 through IFE, and those frames pass
 through IPE with locally generated rear-sensor programs. The packaged front
 camera remains the qualified desktop path. The updated packages include an optional rear PipeWire publisher;
 [installation](../../docs/INSTALL.md#experimental-ov13858-rear-isp) is explicit.
@@ -21,9 +21,12 @@ The bounded experiment scripts do not install packages or replace the kernel.
 - The sensor is OV13858, ACPI ID **MSHW0491**, with native GRBG RAW10. Its full
   mode is 4224x3136. IFE scales to 3840x2850 and crops at `(0,344)` to 3840x2160.
 - CSID 680 `CAMIF_FRAME_CFG`, register `0x330`, bits 26:24, selects the Bayer
-  pattern forwarded to IFE: RGGB=0, GBRG=1, BGGR=2, GRBG=3. Tests swept all four
-  values with the CSID generator and the rear sensor's own colour bars.
-  GRBG=3 gives white/yellow/cyan/green/magenta/red/blue/black in the right order.
+  pattern forwarded to IFE: RGGB=0, GRBG=1, BGGR=2, GBRG=3. The original bar
+  interpretation incorrectly selected 3 for GRBG. On 2026-11-08 paired real
+  GRBG RAW and pre-IPE NV12 proved that 3 reverses red and blue before white
+  balance; 1 restores their correspondence. Red-only and blue-only gain trials
+  independently verified the gain controls. Sensor bars alone did not qualify
+  real-scene channel identity.
   Horizontal cropping is unsuitable because it scrambles packed RAW10 groups.
 - `csid-native-bayer.patch` derives the field from the effective source format.
   It retains the existing GBRG row crop for front-path compatibility. RAW10 was
@@ -122,8 +125,10 @@ generated binary assets to this repository. For an adaptive bank, run the main `
 On kernel `7.2.8-13.1-omarchy-isp+`:
 
 - Three changing 4224x3136 packed RAW10 frames, both before and after ISP trials.
-- Rear colour bars validate native GRBG; a real scene confirms an image through
+- Rear colour bars and a real scene confirm an image through
   IFE and IPE. Fixed controls are 30 ms, 2x analogue gain and 1x sensor digital.
+  These initial checks did not validate real-scene channel identity; the
+  2026-11-08 paired-RAW correction above supersedes the original Bayer choice.
 - Sixteen IFE-only 4K frames at approximately 30 fps.
 - Eight offline IPE submissions; mapped and debugfs readback agree byte for byte.
 - Ninety live IFE-to-IPE frames, all input hashes distinct, in 5.76 seconds

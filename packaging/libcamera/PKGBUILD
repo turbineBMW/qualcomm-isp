@@ -1,6 +1,6 @@
 pkgname=qualcomm-isp-libcamera
 pkgver=0.7.2
-pkgrel=5
+pkgrel=6
 pkgdesc='Private libcamera capture tool for the experimental Qualcomm ISP runtime'
 arch=('aarch64')
 license=('LGPL-2.1-or-later' 'GPL-2.0-or-later' 'Apache-2.0' 'CC0-1.0')
@@ -10,11 +10,15 @@ _commit=aeae1f0c7155ae2a175f27b571496f87943197f9
 source=("libcamera-${_commit}.tar.gz::https://github.com/turbineBMW/libcamera/archive/${_commit}.tar.gz"
         'libcamera-working.patch'
         'libcamera-rear.patch'
-        'libcamera-mode-controls.patch')
+        'libcamera-mode-controls.patch'
+        'libcamera-neutral-lsc.patch'
+        'test-lsc-stats.cpp')
 sha256sums=('a8d3b2c225d4c2b87a9b8149c6e34ab0943e3df67232c8879aedfb397e9a52cd'
             '8af163523d042301f4b0ff153ab98a8010421547aecda129a55d871c8e400bff'
             '29901088e22a20961d399b8eb107ba1086850acb422e09199668a515e4baafa5'
-            'd2f77793dd16e258afbf5d1c02dca12d6ad807906818feca323af8ead22f24b4')
+            'd2f77793dd16e258afbf5d1c02dca12d6ad807906818feca323af8ead22f24b4'
+            '63438742acd81d541b47fd66868bf903dbcf4ff1f576dcac06d48dc39226d52d'
+            '42135a36f2e790aa7f9a380b2834b71b82c7b06bba1a8d181abf128bfa827480')
 options=('!debug')
 prepare() {
   mv "libcamera-${_commit}" libcamera
@@ -22,6 +26,7 @@ prepare() {
   patch -Np1 -i ../libcamera-working.patch
   patch -Np1 -i ../libcamera-rear.patch
   patch -Np1 -i ../libcamera-mode-controls.patch
+  patch -Np1 -i ../libcamera-neutral-lsc.patch
 }
 build() {
   meson setup --reconfigure libcamera build --prefix=/usr/lib/qualcomm-isp/libcamera --libdir=lib \
@@ -31,6 +36,11 @@ build() {
     -Dcam-output-kms=disabled -Dcam-output-sdl2=disabled -Dcam-jpeg=disabled \
     -Dwerror=false -Dc_link_args= -Dcpp_link_args=
   meson compile -C build -j 8
+}
+check() {
+  g++ -std=c++17 -O2 -Wall -Wextra -Werror -I libcamera/src/libcamera/pipeline/camss \
+    test-lsc-stats.cpp -o test-lsc-stats
+  ./test-lsc-stats
 }
 package() {
   DESTDIR="$pkgdir" meson install -C build --no-rebuild

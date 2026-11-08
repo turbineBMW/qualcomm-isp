@@ -1,5 +1,43 @@
 # Initial source publication checks
 
+## Mild neutral rear shading, libcamera 0.7.2-6 (2026-11-08)
+
+- Added an opt-in, bounded neutral-LSC model for the rear RAW control algorithms.
+  The default remains off. Non-neutral meshes, gains above 1.25 and nonlinear
+  response remain unsupported with RAW AE/AWB; front keeps its existing guard.
+- Hardware off/unity/mild trials passed at fixed controls. A smooth mesh capped
+  at 1.2 lifted sampled outer regions roughly 7–10% in linearized pre-IPE values,
+  while center changed below 1%. No per-channel color correction was fitted.
+- Adaptive capture passed; saved native RAW and diagnostic histograms still
+  agree exactly. Package source reconstruction matches all 17 provenance hashes;
+  the model regression passed during package build. Installed libcamera84files
+  and runtime58files both report zero altered files.
+- Installed desktop front/rear/front/cancelled-start regression passed with
+  first frames in 5.13/3.07/3.31/2.25 seconds. Local rear tuning is a separate,
+  backed-up profile; imported assets and package-owned profiles are intact.
+- See [model and qualification limits](../experiments/shading/README.md).
+
+## Rear colour correction, runtime 0.1-14 (2026-11-08)
+
+- Corrected native GRBG selector 3 → 1 after paired real-scene RAW/pre-IPE
+  comparison proved a red/blue inversion before white balance. Independent
+  red-only/blue-only gain trials verified control identity. The original sensor
+  color-bar interpretation did not establish real-scene identity.
+- Three bounded 180-frame diagnostic captures completed with clean teardown.
+  Both saved-input color replay comparisons used one allocation set and passed
+  35 submissions each; fixed-temperature and repeated baselines were identical.
+  The first historical replay attempt exposed a test-harness reallocation error;
+  cleanup succeeded, the user approved the corrected retry, and it passed.
+- Package check phase passed 52 lifecycle/transport/demand tests and six PD10
+  comparisons. Installed runtime has 58 files and zero alterations. Desktop
+  front/rear/front and cancelled rear startup passed with first images in
+  2.13/3.00/3.67/2.56 seconds. Existing camera assets and firmware remain intact.
+- Added opt-in paired pre/post-IPE frame retention for bounded diagnostics;
+  disabled by default. Fixed preparation's branch-specific CCM/CV CCT selection;
+  five synthetic regressions and seven existing preparation checks pass.
+- Broader lighting, unit calibration/shading, Windows still-capture parity and
+  suspend/resume remain separate qualifications. Optional CCT sets remain off.
+
 ## Gaze switching follow-up, runtime 0.1-13 (2026-11-08)
 
 - User acceptance found black viewfinders when switching front -> rear ->

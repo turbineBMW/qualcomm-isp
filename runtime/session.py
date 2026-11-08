@@ -100,7 +100,9 @@ def main():
                 if saved_ipp:
                     saved_ipp = None
                     raise RuntimeError('Existing IPP overrides must not be replaced')
-                ipp_parameter.write_text('0x330=0x3000000\n')
+                # Native GRBG is pattern 1. Pattern 3 reverses R/B before WB;
+                # validate with paired real-scene RAW, not sensor bars alone.
+                ipp_parameter.write_text('0x330=0x1000000\n')
             subprocess.run(['modprobe', 'qcom_camss_icp'], check=True)
             if not Path('/sys/kernel/debug/camss-icp/alloc').exists():
                 raise RuntimeError('ICP firmware did not initialize')

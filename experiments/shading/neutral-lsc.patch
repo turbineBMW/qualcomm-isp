@@ -1,0 +1,196 @@
+--- /dev/null
++++ b/src/libcamera/pipeline/camss/camss_lsc_stats.h
+@@ -0,0 +1,71 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++#include <vector>
++
++namespace libcamera {
++
++/* Qualified rear geometry only. Mirror a small, neutral, linear hardware
++ * shading mesh for the control algorithms; saved RAW remains unmodified.
++ * Separate color meshes and nonlinear gain response need their own model.
++ */
++class CamssLscStats
++{
++public:
++	bool configure(const std::vector<uint16_t> &mesh)
++	{
++		enabled_ = false;
++		if (mesh.size() != 4 * 221)
++			return false;
++		if (std::all_of(mesh.begin(), mesh.end(), [](auto v) { return v == 0; }))
++			return true;
++		for (unsigned int i = 0; i < mesh.size(); i++)
++			if (mesh[i] < 1024 || mesh[i] > 1280 || mesh[i] != mesh[i % 221])
++				return false;
++		for (unsigned int y = 0; y < 135; y++) {
++			unsigned int rawY = (((y * 16 + 344) * 3136 / 2850) & ~1u);
++			for (unsigned int x = 0; x < 240; x++) {
++				unsigned int rawX = ((x * 16 * 4224 / 3840) & ~1u);
++				gains_[y * 240 + x] = std::lround(sample(mesh, rawX / 2.0 / 2111 * 16,
++								      rawY / 2.0 / 1567 * 12));
++			}
++		}
++		enabled_ = true;
++		return true;
++	}
++
++	bool enabled() const { return enabled_; }
++
++	std::array<unsigned int, 4> apply(std::array<unsigned int, 4> quad,
++					unsigned int x, unsigned int y) const
++	{
++		if (!enabled_)
++			return quad;
++		unsigned int gain = gains_.at((y / 16) * 240 + x / 16);
++		for (auto &v : quad) {
++			/* Preserve the sensor pedestal and model saturation before WB. */
++			if (v > 64)
++				v = std::min(1023u, 64 + ((v - 64) * gain + 512) / 1024);
++		}
++		return quad;
++	}
++
++private:
++	static double sample(const std::vector<uint16_t> &mesh, double x, double y)
++	{
++		unsigned int ix = std::min(15u, static_cast<unsigned int>(x));
++		unsigned int iy = std::min(11u, static_cast<unsigned int>(y));
++		double fx = x - ix, fy = y - iy;
++		return (1 - fy) * ((1 - fx) * mesh[iy * 17 + ix] + fx * mesh[iy * 17 + ix + 1]) +
++			fy * ((1 - fx) * mesh[(iy + 1) * 17 + ix] + fx * mesh[(iy + 1) * 17 + ix + 1]);
++	}
++
++	bool enabled_ = false;
++	std::array<uint16_t, 32400> gains_{};
++};
++
++} /* namespace libcamera */
+--- a/src/libcamera/pipeline/camss/camss_raw_stats.h
++++ b/src/libcamera/pipeline/camss/camss_raw_stats.h
+@@ -18,6 +18,7 @@
+ #include <libcamera/base/event_notifier.h>
+ 
+ #include "camss_bayer_awb.h"
++#include "camss_lsc_stats.h"
+ #include "camss_highlight_ae.h"
+ 
+ #include "libcamera/internal/v4l2_videodevice.h"
+@@ -38,6 +39,7 @@
+ 	void stop();
+ 	void recordOutput(FrameBuffer *buffer, unsigned int request, const ControlList &metadata);
+ 	void enableAwbStats() { awbStats_ = true; }
++	bool setShadingMesh(const std::vector<uint16_t> &mesh) { return rear_ && shading_.configure(mesh); }
+ 	Signal<uint32_t, uint64_t, const CamssBayerAwb::Stats &> statsReady;
+ 	Signal<uint32_t, uint64_t, const CamssHighlightAe::Stats &> histogramReady;
+ 
+@@ -64,6 +66,7 @@
+ 	V4L2VideoDevice *output_;
+ 	std::string directory_;
+ 	bool rear_;
++	CamssLscStats shading_;
+ 	unsigned int stride_;
+ 	unsigned int rawBytes_;
+ 	std::vector<std::unique_ptr<FrameBuffer>> buffers_;
+--- a/src/libcamera/pipeline/camss/camss_raw_stats.cpp
++++ b/src/libcamera/pipeline/camss/camss_raw_stats.cpp
+@@ -296,6 +296,8 @@
+ 				stats.fullSamples = 32400;
+ 				stats.centreSamples = 8160;
+ 			}
++			/* Diagnostic histograms stay native RAW; controls use the shaded view. */
++			CamssHighlightAe::Stats controlStats = stats;
+ 			auto &hist = stats.full;
+ 			struct Tile {
+ 				std::array<uint64_t, 4> sum{};
+@@ -317,16 +319,22 @@
+ 					};
+ 					if (rear_)
+ 						quad = { quad[1], quad[0], quad[3], quad[2] };
++					auto shaded = shading_.apply(quad, x, y);
++					for (unsigned int c = 0; shading_.enabled() && c < 4; c++) {
++						controlStats.full[c][shaded[c]]++;
++						if (x >= 960 && x < 2880 && y >= 540 && y < 1620)
++							controlStats.centre[c][shaded[c]]++;
++					}
+ 					if (awbStats_) {
+ 						auto &fine = awb[(y / 120) * CamssBayerAwb::kColumns + x / 120];
+ 						fine.count++;
+ 						bool neutralValid = true;
+-						for (unsigned int value : quad)
++						for (unsigned int value : shaded)
+ 							neutralValid &= value > 72 && value < 1000;
+ 						if (neutralValid) {
+ 							fine.valid++;
+ 							for (unsigned int c = 0; c < 4; c++)
+-								fine.sum[c] += quad[c] - 64;
++								fine.sum[c] += shaded[c] - 64;
+ 						}
+ 					}
+ 					Tile &tile = tiles[(y / 360) * 8 + x / 480];
+@@ -389,7 +397,7 @@
+ 			rawCount_++;
+ 			if (rear_) {
+ 				result.valid = !failed_;
+-				result.histogram = std::move(stats);
++				result.histogram = shading_.enabled() ? std::move(controlStats) : std::move(stats);
+ 				result.awb = std::move(awb);
+ 			} else {
+ 				if (!failed_)
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.h
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.h
+@@ -167,6 +167,7 @@
+ 	std::optional<std::array<uint16_t, 256>> gammaLut_;
+ 	std::optional<std::array<int32_t, 12>> ccm_;
+ 	std::optional<std::vector<uint16_t>> lscMesh_;
++	bool rawLscModel_ = false;
+ 	CamssDenoise::Params denoiseParams_;
+ 	CamssSpatial::Params spatialParams_;
+ 	double spatialMinNoise_;	/* below this luma noise the spatial stage rests */
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.cpp
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.cpp
+@@ -467,6 +467,7 @@
+ 		}
+ 	}
+ 
++	rawLscModel_ = (*root)["raw_lsc_model"].get<bool>().value_or(false);
+ 	if (root->contains("lsc")) {
+ 		const ValueNode &lsc = (*root)["lsc"];
+ 		double strength = (*root)["lsc_strength"].get<double>().value_or(1.0);
+@@ -481,6 +482,8 @@
+ 			ra = (*resp)[0];
+ 			rb = (*resp)[1];
+ 		}
++		/* Only the measured linear, neutral response is modeled in RAW stats. */
++		rawLscModel_ &= ra == 0.0 && rb == 1.0;
+ 		constexpr unsigned int points = QCOM_CAMSS_LSC_MESH_ROWS * QCOM_CAMSS_LSC_MESH_COLS;
+ 		std::vector<uint16_t> mesh;
+ 		for (const char *ch : { "r", "gr", "gb", "b" }) {
+@@ -572,12 +575,17 @@
+ 
+ 	if (!bayerAwbConfigValid_ || !highlightAeConfigValid_ || (centrePriority_ && !highlightAeEnabled_))
+ 		return -EINVAL;
+-	if ((bayerAwbEnabled_ || highlightAeEnabled_) && (!rawStats_ || blackLevel_ != 64 || !lscMesh_ ||
+-		std::any_of(lscMesh_->begin(), lscMesh_->end(), [](uint16_t v) { return v != 0; }) ||
+-		!pix_->supportsFrameStartEvent())) {
+-		LOG(Camss, Error) << "RAW algorithms require paired RAW, SOF events, black64 and explicitly disabled LSC";
++	bool rawLscValid = lscMesh_ &&
++		std::all_of(lscMesh_->begin(), lscMesh_->end(), [](uint16_t v) { return v == 0; });
++	if (rawLscModel_ && rawStats_ && lscMesh_ && sensor_->model() == "ov13858")
++		rawLscValid = rawStats_->setShadingMesh(*lscMesh_);
++	if ((bayerAwbEnabled_ || highlightAeEnabled_) && (!rawStats_ || blackLevel_ != 64 ||
++		!rawLscValid || !pix_->supportsFrameStartEvent())) {
++		LOG(Camss, Error) << "RAW algorithms require paired RAW, SOF, black64 and disabled or qualified neutral rear LSC";
+ 		return -EINVAL;
+ 	}
++	if (rawLscModel_ && rawLscValid)
++		LOG(Camss, Info) << "Qualified neutral rear LSC modeled in RAW control statistics";
+ 	/* The legacy NV12 AWB changes requested WB before RAW is delivered and
+ 	 * would prevent the paired-control settling check from making progress. */
+ 	if (highlightAeEnabled_ && (!bayerAwbEnabled_ || !std::isfinite(targetLuma_) ||

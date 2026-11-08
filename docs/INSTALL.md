@@ -158,11 +158,16 @@ available during this migration.
 ## Experimental OV13858 rear ISP
 
 The rear path has been tested on this Denali OLED with the existing qualified
-lab kernel. Use private libcamera package `0.7.2-5` and runtime `0.1-13`
+lab kernel. Use private libcamera package `0.7.2-5` and runtime `0.1-14`
 or later. It uses the kernel's temporary native-GRBG register override, restored
 when the session ends; the source CSID fix still needs a kernel build and boot
 qualification. See [the experiment](../experiments/ov13858/README.md) for input
 hashes, geometry, frame association and measured results.
+
+Runtime `0.1-14` corrects the rear Bayer selector from 3 to 1. Earlier rear
+runtime versions invert red and blue before white balance. The correction was
+verified against sequence-matched real-scene RAW and pre-IPE NV12, independently
+of colour-temperature tuning.
 
 Generate a separate local bank with `preparation/prepare.py --sensor ov13858`,
 using the exact rear tuning file and DLL described there. Import it with
