@@ -119,5 +119,30 @@ debugfs readback, and repeated baselines. A 180-output live trial completed in
 lighting and duration differed, so this is not a controlled performance score.
 Large color patches are reduced, with residual shadow tint/banding still visible.
 The camera input remains NV12, and this is not a native ten-bit sensor pipeline.
-Early IFE color correction remains a separate uninstalled experiment pending
-highlight-accounting qualification. Sharpening strength has not been increased.
+Early IFE color correction was subsequently qualified with RAW highlight
+accounting in libcamera 0.7.2-7. Sharpening strength has not been increased.
+
+## Rear motion rendering
+
+A moving hand and charger exposed repeated old outlines even at a measured
+16,653 microsecond shutter. Replaying the same ordered saved inputs with
+independent seeds isolated temporal filtering: TF enabled produced multiple
+outlines; disabling its IQ enables removed those trails. Spatial ANR, color,
+tone and sharpening were unchanged. Disabling TF exposes more noise. Saved
+inputs are sparsely sampled, so this comparison establishes the source of the
+artifact rather than its exact severity at normal desktop cadence.
+
+`preparation/prepare-motion-bank.py` accepts `--assets` pointing to the qualified
+rear P010 early-color bank, the pinned `--dll`, the `--oracle` loader and a new
+private `--output`. It disables the four TF pass enables and regenerates full
+striping for all entries, checking scratch bounds and manifest hashes. Seed
+programs and every other program remain unchanged. This is a conservative
+bypass pending qualification of motion-aware temporal filtering; it is not a
+claim that the factory temporal algorithm itself is defective.
+
+Runtime 0.1-16 also keeps the rear nominal frame period at approximately 1/30 s
+(`--slow-frame 1.0`) instead of allowing extension toward 1/15 s. A 300-output
+automatic trial settled at 33,307 microseconds and maximum reported analogue
+gain in warm indoor lighting. The shorter exposure trades low-light signal for
+less motion blur. It cannot freeze fast movement or compensate for arbitrarily
+dim lighting. Front capture policy is unchanged.
