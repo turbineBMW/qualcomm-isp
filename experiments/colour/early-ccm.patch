@@ -1,0 +1,336 @@
+--- /dev/null
++++ b/src/libcamera/pipeline/camss/camss_ccm_stats.h
+@@ -0,0 +1,121 @@
++/* SPDX-FileCopyrightText: 2026 Brandon Williams <turbine.bmw@gmail.com> */
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++#include <vector>
++
++namespace libcamera {
++
++/* Rear RAW quads estimate the pre-gamma CCM highlight envelope. This does
++ * not reconstruct the hardware demosaic or replace the sensor/WB ceiling.
++ * Retain joint samples: independent channel histograms lose color covariance.
++ */
++class CamssCcmStats
++{
++public:
++	struct Sample {
++		std::array<uint16_t, 4> value; /* shaded R, Gr, Gb, B, black64 */
++		bool centre;
++	};
++	using Samples = std::vector<Sample>;
++	struct Peak {
++		bool valid = false;
++		double value = 0;
++		double saturated = 0;
++	};
++
++	bool configure(const std::array<int32_t, 12> &matrix)
++	{
++		enabled_ = false;
++		/* Offsets change exposure scaling and need a separate model. */
++		for (unsigned int i = 9; i < 12; i++)
++			if (matrix[i])
++				return false;
++		int32_t maximum = 0;
++		for (unsigned int i = 0; i < 9; i++) {
++			if (matrix[i] < -8192 || matrix[i] > 8191)
++				return false;
++			maximum = std::max(maximum, std::abs(matrix[i]));
++		}
++		for (unsigned int row = 0; row < 3; row++) {
++			int32_t sum = matrix[row * 3] + matrix[row * 3 + 1] + matrix[row * 3 + 2];
++			if (std::abs(sum - 1024) > 32 || matrix[row * 4] < 512)
++				return false;
++		}
++		/* Match vfe_680_pix_set_cc: signed division truncates toward zero
++		 * when coefficients exceed the hardware's signed twelve-bit range. */
++		unsigned int shift = 0;
++		while (maximum > 2047) {
++			maximum >>= 1;
++			shift++;
++		}
++		for (unsigned int i = 0; i < 9; i++)
++			matrix_[i] = (matrix[i] / (1 << shift)) / double(1024 >> shift);
++		enabled_ = true;
++		return true;
++	}
++
++	bool enabled() const { return enabled_; }
++
++	Peak evaluate(const Samples &samples, unsigned int expected,
++		      const std::array<double, 2> &wb, double percentile, bool centre) const
++	{
++		if (!enabled_ || !expected || !std::isfinite(percentile) || percentile <= 0 || percentile > 1)
++			return {};
++		for (double gain : wb)
++			if (!std::isfinite(gain) || gain < 0.25 || gain > 4)
++				return {};
++		/* Overflow is retained at 8x full scale; enough to force the
++		 * bounded AE step down, without unbounded histogram allocation. */
++		std::array<unsigned int, 8193> histogram{};
++		unsigned int count = 0, saturated = 0;
++		for (const auto &sample : samples) {
++			if (centre && !sample.centre)
++				continue;
++			std::array<double, 4> raw{};
++			for (unsigned int i = 0; i < 4; i++) {
++				if (sample.value[i] > 1023)
++					return {};
++				raw[i] = std::max(int(sample.value[i]) - 64, 0) / 1024.0;
++			}
++			/* WB precedes demosaic/CCM. Keep the original RAW/WB ceiling
++			 * separately, since clipped inputs can hide later amplification. */
++			std::array<double, 3> rgb = {
++				std::min(raw[0] * wb[0], 4095.0 / 4096),
++				(raw[1] + raw[2]) / 2,
++				std::min(raw[3] * wb[1], 4095.0 / 4096)
++			};
++			double peak = 0;
++			for (unsigned int row = 0; row < 3; row++) {
++				double value = 0;
++				for (unsigned int col = 0; col < 3; col++)
++					value += matrix_[row * 3 + col] * rgb[col];
++				peak = std::max(peak, value);
++			}
++			unsigned int code = std::min(8192u, static_cast<unsigned int>(std::ceil(peak * 1024)));
++			histogram[code]++;
++			saturated += peak >= 1020.0 / 1024;
++			count++;
++		}
++		if (count != expected)
++			return {};
++		unsigned int accumulated = 0;
++		unsigned int threshold = std::ceil(expected * percentile);
++		for (unsigned int code = 0; code < histogram.size(); code++) {
++			accumulated += histogram[code];
++			if (accumulated >= threshold)
++				return { true, code / 1024.0, saturated / double(count) };
++		}
++		return {};
++	}
++
++private:
++	bool enabled_ = false;
++	std::array<double, 9> matrix_{};
++};
++
++} /* namespace libcamera */
+--- a/src/libcamera/pipeline/camss/camss_highlight_ae.h
++++ b/src/libcamera/pipeline/camss/camss_highlight_ae.h
+@@ -6,6 +6,8 @@
+ #include <array>
+ #include <cmath>
+ #include <cstdint>
++
++#include "camss_ccm_stats.h"
+ 
+ namespace libcamera {
+ 
+@@ -16,6 +18,7 @@
+ 	struct Stats {
+ 		Histogram full{};
+ 		Histogram centre{}; /* middle half of each native-4K axis */
++		CamssCcmStats::Samples colourSamples;
+ 		unsigned int fullSamples = 129600;
+ 		unsigned int centreSamples = 32400;
+ 	};
+@@ -34,9 +37,12 @@
+ 	static Result evaluate(const Histogram &hist, const std::array<double, 2> &wb,
+ 			       double meanY, double targetY, unsigned int samples = 129600,
+ 			       double percentileFraction = 0.995, double clippingBudget = 0.001,
+-			       double peakTarget = 0.80)
++			       double peakTarget = 0.80, double colourPeak = 0, double colourSaturated = 0)
+ 	{
+ 		Result result;
++		if (!std::isfinite(colourPeak) || colourPeak < 0 ||
++		    !std::isfinite(colourSaturated) || colourSaturated < 0 || colourSaturated > 1)
++			return result;
+ 		if (!std::isfinite(meanY) || !std::isfinite(targetY) ||
+ 		    meanY < 0 || meanY > 255 || targetY <= 0 || targetY > 255 ||
+ 		    !samples || !std::isfinite(percentileFraction) ||
+@@ -47,6 +53,10 @@
+ 		for (double gain : wb)
+ 			if (!std::isfinite(gain) || gain < 0.25 || gain > 4)
+ 				return result;
++		/* The peak target must cover at least the unclipped population.
++		 * Otherwise the peak controller brightens toward (say) p99.5 while
++		 * a 0.1% clipping budget cuts exposure back on the next frame. */
++		percentileFraction = std::max(percentileFraction, 1.0 - clippingBudget);
+ 		std::array<double, 4> gains = { wb[0], 1, 1, wb[1] };
+ 		for (unsigned int c = 0; c < 4; c++) {
+ 			uint64_t count = 0, saturated = 0;
+@@ -60,10 +70,16 @@
+ 			}
+ 			if (count != samples)
+ 				return result;
+-			result.peak = std::max(result.peak,
+-				std::max(static_cast<int>(percentile) - 64, 0) * gains[c] / 1024.0);
++			double linear = std::max(static_cast<int>(percentile) - 64, 0);
++			/* Sensor headroom ends at 1023-black64, before WB. A 0.95
++			 * target expressed only in /1024 post-black units is unreachable
++			 * for unity-gain green and fights the sensor clipping limiter. */
++			result.peak = std::max({ result.peak, linear / 959.0,
++				linear * gains[c] / 1024.0 });
+ 			result.saturated = std::max(result.saturated, saturated / static_cast<double>(samples));
+ 		}
++		result.peak = std::max(result.peak, colourPeak);
++		result.saturated = std::max(result.saturated, colourSaturated);
+ 		/* Retain the existing luma feedback model; the RAW ceiling is in
+ 		 * linear sensor units. Neither is a reconstruction of Windows AE. */
+ 		result.photometric = std::clamp(std::pow(targetY / std::max(meanY, 1.0), 1.32), 0.5, 2.0);
+@@ -94,10 +110,22 @@
+ 	static Result evaluate(const Stats &stats, const std::array<double, 2> &wb,
+ 			       double meanY, double targetY, bool centrePriority,
+ 			       double peakTarget = 0.80, double peripheralClipping = 0.01,
+-			       double centreClipping = 0.001, double centrePercentile = 0.995)
++			       double centreClipping = 0.001, double centrePercentile = 0.995,
++			       const CamssCcmStats *colour = nullptr)
+ 	{
++		CamssCcmStats::Peak fullColour, centreColour;
++		if (colour) {
++			fullColour = colour->evaluate(stats.colourSamples, stats.fullSamples, wb,
++				centrePriority ? std::max(0.98, 1.0 - peripheralClipping) : 0.999, false);
++			if (centrePriority)
++				centreColour = colour->evaluate(stats.colourSamples, stats.centreSamples,
++					wb, std::max(centrePercentile, 1.0 - centreClipping), true);
++			if (!fullColour.valid || (centrePriority && !centreColour.valid))
++				return {};
++		}
+ 		if (!centrePriority)
+-			return evaluate(stats.full, wb, meanY, targetY, stats.fullSamples, 0.995, 0.001, peakTarget);
++			return evaluate(stats.full, wb, meanY, targetY, stats.fullSamples, 0.995, 0.001,
++				peakTarget, fullColour.value, fullColour.saturated);
+ 		for (unsigned int c = 0; c < 4; c++)
+ 			for (unsigned int b = 0; b < 1024; b++)
+ 				if (stats.centre[c][b] > stats.full[c][b])
+@@ -106,8 +134,8 @@
+ 		 * limited bright peripheral area while retaining strict central
+ 		 * protection and a whole-frame ceiling. Missing centre data must
+ 		 * never silently relax the conservative limit. */
+-		auto whole = evaluate(stats.full, wb, meanY, targetY, stats.fullSamples, 0.98, peripheralClipping, peakTarget);
+-		auto centre = evaluate(stats.centre, wb, meanY, targetY, stats.centreSamples, centrePercentile, centreClipping, peakTarget);
++		auto whole = evaluate(stats.full, wb, meanY, targetY, stats.fullSamples, 0.98, peripheralClipping, peakTarget, fullColour.value, fullColour.saturated);
++		auto centre = evaluate(stats.centre, wb, meanY, targetY, stats.centreSamples, centrePercentile, centreClipping, peakTarget, centreColour.value, centreColour.saturated);
+ 		whole.valid = whole.valid && centre.valid;
+ 		whole.centrePeak = centre.peak;
+ 		whole.centreSaturated = centre.saturated;
+--- a/src/libcamera/pipeline/camss/camss_raw_stats.h
++++ b/src/libcamera/pipeline/camss/camss_raw_stats.h
+@@ -39,6 +39,7 @@
+ 	void stop();
+ 	void recordOutput(FrameBuffer *buffer, unsigned int request, const ControlList &metadata);
+ 	void enableAwbStats() { awbStats_ = true; }
++	void enableColourSamples() { colourSamples_ = rear_; }
+ 	bool setShadingMesh(const std::vector<uint16_t> &mesh) { return rear_ && shading_.configure(mesh); }
+ 	Signal<uint32_t, uint64_t, const CamssBayerAwb::Stats &> statsReady;
+ 	Signal<uint32_t, uint64_t, const CamssHighlightAe::Stats &> histogramReady;
+@@ -76,6 +77,7 @@
+ 	std::atomic<bool> failed_{false};
+ 	bool saveRaw_ = false;
+ 	bool awbStats_ = false;
++	bool colourSamples_ = false;
+ 	unsigned int rawCount_ = 0;
+ 	unsigned int outputCount_ = 0;
+ 	uint32_t lastSequence_ = UINT32_MAX;
+--- a/src/libcamera/pipeline/camss/camss_raw_stats.cpp
++++ b/src/libcamera/pipeline/camss/camss_raw_stats.cpp
+@@ -265,9 +265,12 @@
+ 	for (const auto &result : ready) {
+ 		const auto &meta = result.buffer->metadata();
+ 		if (result.valid && !failed_) {
+-			histogramReady.emit(meta.sequence, meta.timestamp, result.histogram);
++			/* Run the small WB update before the optional joint-color AE
++			 * analysis, so AE's CPU time does not age otherwise fresh WB.
++			 * AE still uses this frame's recorded applied WB, not the new goal. */
+ 			if (awbStats_)
+ 				statsReady.emit(meta.sequence, meta.timestamp, result.awb);
++			histogramReady.emit(meta.sequence, meta.timestamp, result.histogram);
+ 		}
+ 		if (running_ && output_->queueBuffer(result.buffer)) {
+ 			failed_ = true;
+@@ -298,6 +301,9 @@
+ 			}
+ 			/* Diagnostic histograms stay native RAW; controls use the shaded view. */
+ 			CamssHighlightAe::Stats controlStats = stats;
++			auto &colour = shading_.enabled() ? controlStats.colourSamples : stats.colourSamples;
++			if (colourSamples_)
++				colour.reserve(stats.fullSamples);
+ 			auto &hist = stats.full;
+ 			struct Tile {
+ 				std::array<uint64_t, 4> sum{};
+@@ -320,6 +326,12 @@
+ 					if (rear_)
+ 						quad = { quad[1], quad[0], quad[3], quad[2] };
+ 					auto shaded = shading_.apply(quad, x, y);
++					if (colourSamples_) {
++						CamssCcmStats::Sample sample{};
++						std::copy(shaded.begin(), shaded.end(), sample.value.begin());
++						sample.centre = x >= 960 && x < 2880 && y >= 540 && y < 1620;
++						colour.push_back(sample);
++					}
+ 					for (unsigned int c = 0; shading_.enabled() && c < 4; c++) {
+ 						controlStats.full[c][shaded[c]]++;
+ 						if (x >= 960 && x < 2880 && y >= 540 && y < 1620)
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.h
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.h
+@@ -168,6 +168,8 @@
+ 	std::optional<std::array<int32_t, 12>> ccm_;
+ 	std::optional<std::vector<uint16_t>> lscMesh_;
+ 	bool rawLscModel_ = false;
++	bool rawCcmModel_ = false;
++	CamssCcmStats rawColour_;
+ 	CamssDenoise::Params denoiseParams_;
+ 	CamssSpatial::Params spatialParams_;
+ 	double spatialMinNoise_;	/* below this luma noise the spatial stage rests */
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.cpp
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.cpp
+@@ -467,6 +467,7 @@
+ 		}
+ 	}
+ 
++	rawCcmModel_ = (*root)["raw_ccm_model"].get<bool>().value_or(false);
+ 	rawLscModel_ = (*root)["raw_lsc_model"].get<bool>().value_or(false);
+ 	if (root->contains("lsc")) {
+ 		const ValueNode &lsc = (*root)["lsc"];
+@@ -584,6 +585,24 @@
+ 		LOG(Camss, Error) << "RAW algorithms require paired RAW, SOF, black64 and disabled or qualified neutral rear LSC";
+ 		return -EINVAL;
+ 	}
++	bool identityCcm = true;
++	if (ccm_) {
++		for (unsigned int i = 0; i < 12; i++)
++			identityCcm &= (*ccm_)[i] == (i < 9 && i % 4 == 0 ? 1024 : 0);
++	}
++	if (highlightAeEnabled_ && !identityCcm && !rawCcmModel_) {
++		LOG(Camss, Error) << "Non-identity CCM with RAW AE requires the qualified rear CCM model";
++		return -EINVAL;
++	}
++	if (rawCcmModel_) {
++		if (sensor_->model() != "ov13858" || !rawStats_ || !ccm_ ||
++		    !highlightAeEnabled_ || !rawColour_.configure(*ccm_)) {
++			LOG(Camss, Error) << "RAW CCM model requires rear paired RAW AE and a neutral-preserving zero-offset matrix";
++			return -EINVAL;
++		}
++		rawStats_->enableColourSamples();
++		LOG(Camss, Info) << "Rear joint RAW samples model pre-gamma CCM highlights";
++	}
+ 	if (rawLscModel_ && rawLscValid)
+ 		LOG(Camss, Info) << "Qualified neutral rear LSC modeled in RAW control statistics";
+ 	/* The legacy NV12 AWB changes requested WB before RAW is delivered and
+@@ -1291,7 +1310,8 @@
+ 	}
+ 	auto result = CamssHighlightAe::evaluate(stats,
+ 		{ state.red / 1024.0, state.blue / 1024.0 }, luma.mean, targetLuma_, centrePriority_,
+-		highlightPeak_, peripheralClipping_, centreClipping_, centrePercentile_);
++		highlightPeak_, peripheralClipping_, centreClipping_, centrePercentile_,
++		rawCcmModel_ ? &rawColour_ : nullptr);
+ 	if (!result.valid) {
+ 		LOG(Camss, Warning) << "RAW AE " << sequence << " invalid-statistics; holding exposure";
+ 		return;

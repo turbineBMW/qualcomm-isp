@@ -25,6 +25,7 @@
     "prepare-colour-sets.py": "New experimental colour-only generator: validates the accepted bank's colour anchor and retains its sharpening command suffix verbatim.",
     "test-colour-selection.py": "Synthetic nested-reference and interpolation regression tests; no proprietary fixtures.",
     "slrun.c": "Added exact DLL hash enforcement and explicit extracted DS4 coefficients; retains observed ABI offsets and original loader/call code.",
-    "other_helpers": "Portable imports/arguments and MIT SPDX notices; original calculation/packing logic retained."
+    "other_helpers": "Portable imports/arguments and MIT SPDX notices; original calculation/packing logic retained.",
+    "prepare-early-colour.py": "Opt-in validated rear P010 bank conversion: exact source CCM moved before IFE gamma, late CCM unity, joint RAW highlight model required, all other programs preserved; generated owner assets remain local."
   }
 }

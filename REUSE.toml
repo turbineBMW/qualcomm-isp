@@ -1,6 +1,18 @@
 version = 1
 
 [[annotations]]
+path = "experiments/colour/README.md"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Brandon Williams <turbine.bmw@gmail.com>"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "experiments/colour/early-ccm.patch"
+precedence = "override"
+SPDX-FileCopyrightText = ["2026 Brandon Williams <turbine.bmw@gmail.com>", "The libcamera contributors; retained source notices apply"]
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+[[annotations]]
 path = "experiments/shading/README.md"
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Brandon Williams <turbine.bmw@gmail.com>"

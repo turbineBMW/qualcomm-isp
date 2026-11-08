@@ -1,5 +1,33 @@
 # Initial source publication checks
 
+## Early rear color and exposure convergence, libcamera 0.7.2-7 (2026-11-08)
+
+- Joint rear RAW samples model the pre-gamma color matrix's highlight envelope,
+  supplementing sensor/WB protection. The model uses recorded frame WB and the
+  driver's coefficient quantization; unsupported offsets or missing samples
+  fail closed. Native diagnostic histograms and AWB domains are preserved.
+- Peak percentiles now respect clipping budgets, and sensor headroom accounts
+  for black64. A synthetic scene that previously oscillated now converges.
+  Rear WB callbacks precede color analysis to retain their freshness budget.
+- Fixed-control and adaptive four-object captures passed. Old live exposure
+  varied roughly 31,073–45,537 over its final 60 frames; one new trial held
+  36,430, and a subsequent complete-bank trial varied 38,511–40,593. WB settled
+  and tone reached 8x. Early correction reduced the gray object's purple cast.
+  These are successive captures under daylight, not identical sensor frames.
+- All 625 generated post programs match the qualified override trial; every
+  other bank file is unchanged. Both saved RAW histograms match native data.
+  Package checks run CCM/highlight convergence, neutral-LSC and front/rear
+  sampling regressions. Reconstruction matches all 18 source hashes.
+- Front 120-output and rear 240-output trials passed. Installed desktop
+  front/rear/front/cancelled-start checks passed at 2.15/3.06/3.57/5.00 seconds.
+  Integrity checks report libcamera 84 and runtime 59 files, zero altered.
+- Installed desktop capture delivered 90 frames at 3840x2160. Both publishers
+  and WirePlumber were active afterward; ICP unloaded, runtime usage zero and
+  temporary Bayer override empty. No matching kernel faults in the interval.
+- Runtime remains 0.1-15; no kernel, Gaze or sharpening change. Warm/mixed light
+  and a new suspend cycle remain unqualified. See the
+  [model, evidence and rollback](../experiments/colour/README.md).
+
 ## Rear denoising precision, runtime 0.1-15 (2026-11-08)
 
 - Corrected the ANR reserve extraction by four bytes, retaining all four
