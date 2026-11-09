@@ -1,5 +1,70 @@
 # Initial source publication checks
 
+## Front camera: Windows-matched exposure and colour, blending temporal filter, runtime 0.1-24 (2026-11-09)
+
+- Against a same-room Windows Camera preview the 0.1-21 picture was about 45
+  codes too bright on wall and face, had blacks at twice the level and was
+  about 9 % too blue. The front worker now runs `--raw-target 90
+  --luma-target 120 --awb-reference-gains 1.922,1.556` (white point fitted
+  from two bracketing captures) and a refitted warm-light table (50 Windows /
+  Linux pairs under a ring light at five warmth settings: the old table kept
+  44-54 % of a warm light's blue deficit, the wall was 10-17 % too yellow
+  below 4000 K). The start gains follow the same white point.
+- The IPE temporal filter never blended in the three-pass programs: zero
+  frame-to-frame noise correlation at every gain row, a one-level step against
+  a steady reference came out unblended, although the references were
+  rewritten every frame. With TF on the full pass only, deciding for itself,
+  and the striping recalculated, it blends (probe weight 0.47 on the previous
+  frame). Any variant that keeps TF on the DC4 pass does not; why is open.
+  `preparation/temporal_blend.py` converts a bank and `prepare.py` now applies
+  it for the front sensor. The spatial relief (rows above 8x take ANR, ASF,
+  colour and seed pass from up to one stop lower) moved from the runtime
+  option into the bank so each row keeps the temporal thresholds of its real
+  gain; the unit no longer passes `--denoise-relief-ev`.
+- Same 40 recorded frames at 37x total gain, still-area flicker in codes:
+  original programs 1.73 (relieved row) / 1.29 (true row), full-pass TF on the
+  relieved row 1.15, final bank 0.93 with 0.40 frame-to-frame correlation; no
+  trail on the frame with the most motion, skin and hair as with the relieved
+  row. A fresh `prepare.py` run (110 s, 8 jobs) differs from the bank
+  installed here in the ANR programs of every entry (source drift since
+  October) but renders the same: 0.23 codes mean difference, flicker 0.91.
+- Installed here: freshly prepared assets, 180-frame live capture with five
+  program switches clean, desktop path 29.8 fps, publisher sink latency median
+  66 ms.
+- Rear camera, not changed: its TF programs already decide for themselves and
+  do blend, but a two-level step made the output move the wrong way for one
+  frame and left a 0.8-code offset that never decayed while the input was back
+  to the original; the full-pass-only form is byte-identical there. That
+  matches the earlier ghosting, so the rear filter stays off.
+
+## Front camera at native scale: frame rate, denoise relief, tone limit, runtime 0.1-21 (2026-11-09)
+
+- With automatic framing the user sees the 3840x2160 output cropped 1:1 at
+  the zoom limit, so the native-scale picture matters. In an ordinary lit room
+  the IMX681 sits at 16x analogue gain; the worker then extended the frame to
+  42-66 ms (15-22 fps) and selected the 16x programs.
+- Matched RAW, pre-IPE and post-IPE frames of one capture (16x, 51 ms): the
+  RAW and the IFE output hold natural skin and hair with fine grain; the IPE
+  output is flattened into patches. Replaying that pre-IPE frame through
+  existing bank rows shows the same result with a still history, so it is the
+  spatial path of the high-gain programs, not temporal blending. Row 12
+  (8x) keeps the detail with visible grain; rows 8 and lower are grainier.
+- The tone controller chased its mean-luma target with the shadow lift up to
+  8x. On a replayed frame 8x adds about 9 % mean luma over 2x, raises the
+  1st/5th percentile from 12/29 to 23/54 and lifts dark-area noise with it.
+- The front worker now runs `--slow-frame 1.0` (always 30 fps),
+  `--denoise-relief-ev 1.0` (programs one stop lower from 16x, ramping in from
+  8x) and `--max-drc 2.0`. The rear worker is unchanged.
+- Live through the normal PipeWire path, same room: 29.8 fps (was 21.6-22.8),
+  33 ms at 16x analogue and 1.69x sensor digital gain, program `g15-t08`,
+  output luma 142 against the 145 target at 1.94x lift, sink latency p95
+  80 ms (was about 137 ms with doubled frames), 1st/5th percentile 11/28 (was
+  19/41). Temporal noise on the static wall rose from about 1.1 to 1.6 codes:
+  the shorter exposure and the lighter programs cost that much.
+- Not changed: skin still leans pink and dark neutral surfaces lean blue; lens
+  distortion correction is absent. Evidence is local
+  (`work/camera-front-20261109`).
+
 ## Preview latency: input staging and scheduling, runtime 0.1-19 (2026-11-09)
 
 - The rear P010 path shares one hardware input between both slots because a

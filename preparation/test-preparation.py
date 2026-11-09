@@ -14,6 +14,7 @@ sys.path.insert(0, str(HERE))
 from inputs import DLL_SHA256, require_identity, load, anr_reserve
 from prepare import validate_request
 comparison = load('compare-assets')
+import temporal_blend
 
 
 class PreparationChecks(unittest.TestCase):
@@ -92,6 +93,34 @@ class PreparationChecks(unittest.TestCase):
         self.assertEqual(comparison.comparable_striping(a), comparison.comparable_striping(b))
         b[comparison.POINTER_OFFSETS[0] + 8] = 1
         self.assertNotEqual(comparison.comparable_striping(a), comparison.comparable_striping(b))
+
+    def test_spatial_rows_ramp_in_from_eight_times_gain(self):
+        rows = [temporal_blend.spatial_row(g, 1.0) for g in range(25)]
+        self.assertEqual(rows[:13], list(range(13)))
+        self.assertEqual(rows[13:17], [12, 12, 12, 12])
+        self.assertEqual(rows[17:], list(range(13, 21)))
+        self.assertEqual([temporal_blend.spatial_row(g, 0) for g in range(25)], list(range(25)))
+        self.assertTrue(all(b >= a for a, b in zip(rows, rows[1:])))
+
+    def test_temporal_filter_moves_to_the_full_pass_only(self):
+        t = temporal_blend
+        iq = bytearray(6196)
+        for q, on in enumerate((1, 1, 0)):
+            struct.pack_into('<I', iq, t.TF + q * t.PASS, on)
+        for index in (19, 20):
+            struct.pack_into('<I', iq, t.TF + index * 4, 1)
+        program = struct.pack('<4I', 0x0300005e, 0x5868, 0x405c4706, 0x8040) + bytes(404)
+        new_iq, new_program = t.full_pass_only(bytes(iq), program, 'entry')
+        words = struct.unpack_from('<21I', new_iq, t.TF)
+        self.assertEqual((words[0], words[3], words[19], words[20]), (1, 1, 0, 0))
+        self.assertEqual(struct.unpack_from('<I', new_iq, t.TF + t.PASS)[0], 0)
+        self.assertEqual(struct.unpack_from('<I', new_program, 8)[0], 0x40444702)
+        self.assertEqual(new_program[12:], program[12:])
+        self.assertEqual(new_iq[:t.TF], bytes(iq[:t.TF]))
+        with self.assertRaises(ValueError):   # already converted
+            t.full_pass_only(new_iq, new_program, 'entry')
+        with self.assertRaises(ValueError):   # reference marked invalid
+            t.full_pass_only(bytes(iq), struct.pack('<4I', 0x0300005e, 0x5868, 0x405c4707, 0x8040) + bytes(404), 'entry')
 
     def test_unknown_striping_layout_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'Unqualified striping size'):
