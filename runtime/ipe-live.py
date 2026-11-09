@@ -464,6 +464,8 @@ def main():
                    help='post-LTM colour programs per CCT and gain band (prepare-colour-sets.py); the AWB gains select the CCT')
     p.add_argument('--cct-sets', action='store_true',
                    help='Experimental: select the post-LTM colour program by estimated CCT (the 2300-2600 K sets oversaturated warm colours in the first comparison)')
+    p.add_argument('--awb-reference-gains', help='RED,BLUE: replace the profile\'s 5000 K white point (raw_reference_gains). '
+                   'The packaged one is a provisional paper measurement; the front worker uses values fitted to a same-room Windows preview')
     p.add_argument('--raw-target', type=float, default=110, help='RAW AE luma target (profile ae.target); lower exposes less and leaves more to the tone mapper')
     p.add_argument('--luma-target', type=float, default=145, help='Display luma target of the tone controller')
     p.add_argument('--slow-frame-gain', type=float, default=8.0, help='Analogue gain reached at one frame length before the frame grows to slow_frame')
@@ -474,6 +476,12 @@ def main():
     p.add_argument('--initial-drc', type=float, help='Start the tone controller at this DRC gain instead of 1.5 (manual-exposure trials hold it there)')
     p.add_argument('--bank-gain', choices=('analogue', 'total', 'geometric'), default='total',
                    help='Select denoise programs on analogue x digital gain (default; measured 2026-10-17 in a 1.7 lux room), on analogue gain only (keeps texture under digital gain, noisier), or on analogue x sqrt(digital)')
+    p.add_argument('--max-drc', type=float,
+                   help='Upper limit of the tone controller below the bank limit. The lift mostly raises shadows (8x adds about 9 %% mean '
+                        'luma over 2x) and their noise with them, so a low limit keeps blacks and contrast')
+    p.add_argument('--denoise-relief-ev', type=float, default=0.0,
+                   help='Select denoise/sharpen programs this many stops below the bank gain from 16x upward, ramping in from 8x (0 = off). '
+                        'The full-strength high-gain programs smooth faces into flat patches at native scale (replay 2026-11-09)')
     p.add_argument('--sensor-digital-max', type=float, default=3.0,
                    help='Sensor digital gain the RAW AE may add after analogue gain is exhausted (1.0 = none; 3 balances brightness against chroma noise)')
     p.add_argument('--save-raw', action='store_true', help='Retain RAW requests 58/59 for statistics validation')
@@ -512,7 +520,9 @@ def main():
         raise ValueError('Centre priority and RAW validation require adaptive capture')
     adaptive = module('ipe_adaptive', 'ipe-adaptive.py') if a.adaptive else None
     bank = adaptive.Bank(a.bank) if adaptive else None
-    tone = adaptive.Tone(target=a.luma_target, max_gain=bank.max_drc) if adaptive else None
+    if a.max_drc is not None and not 1 <= a.max_drc <= bank.max_drc:
+        raise ValueError('--max-drc must be 1..bank DRC limit')
+    tone = adaptive.Tone(target=a.luma_target, max_gain=a.max_drc or bank.max_drc) if adaptive else None
     if a.initial_drc is not None:
         if not adaptive or not 1 <= a.initial_drc <= bank.max_drc:
             raise ValueError('--initial-drc needs --adaptive and 1..bank DRC limit')
@@ -547,9 +557,16 @@ def main():
     if not 0.5 <= a.highlight_peak <= 0.98 or not 0.001 <= a.peripheral_clipping <= 0.05 or not 0.0005 <= a.centre_clipping <= 0.02 or not 0.9 <= a.centre_percentile <= 0.999:
         raise ValueError('Highlight parameters out of range')
     profile = profile.replace('  raw_highlights: true', f'  highlight_peak: {a.highlight_peak}\n  peripheral_clipping: {a.peripheral_clipping}\n  centre_clipping: {a.centre_clipping}\n  centre_percentile: {a.centre_percentile}\n  raw_highlights: true', 1)
+    if not 0.0 <= a.denoise_relief_ev <= 1.0:
+        raise ValueError('--denoise-relief-ev must be 0..1')
     if not 1.0 <= a.sensor_digital_max <= 8.0:
         raise ValueError('--sensor-digital-max must be 1.0..8.0')
     profile = profile.replace('  sensor_digital_max: 1.0', f'  sensor_digital_max: {a.sensor_digital_max}')
+    if a.awb_reference_gains:
+        red, blue = (float(x) for x in a.awb_reference_gains.split(','))
+        if not 1.0 <= red <= 3.0 or not 1.0 <= blue <= 3.0:
+            raise ValueError('--awb-reference-gains must be RED,BLUE within 1..3')
+        profile = adaptive.replace_reference_gains(profile, red, blue)
     if adaptive and not a.reference_awb:
         # Windows AWB neutral references for this sensor (parity/awb-reference),
         # anchored to the measured paper white point at 5000 K.
@@ -566,6 +583,10 @@ def main():
         profile = re.sub(r'^  raw_reference_gains:.*\n', '', profile, flags=re.M)
     (out/'ife.yaml').write_text(profile)
     initial_controls = dict(CONTROLS, AeEnable=bool(adaptive),AwbEnable=bool(adaptive))
+    if a.awb_reference_gains and adaptive:
+        # Start from the same white point the AWB is anchored to; until it has
+        # enough neutral tiles (a dark room) these gains are what is shown.
+        initial_controls['ColourGains'] = [round(float(x) * 1024) / 1024 for x in a.awb_reference_gains.split(',')]
     warm_start = None
     if a.state_file and adaptive and a.state_file.exists():
         # Same room, same light most of the time: begin where the last
@@ -582,7 +603,7 @@ def main():
                 initial_controls.update(ExposureTime=exposure, AnalogueGain=gain, ColourGains=wb)
                 warm_start = dict(saved, age_hours=age_h)
                 drc = float(saved.get('drc', tone.gain))
-                if a.initial_drc is None and math.isfinite(drc) and 1 <= drc <= bank.max_drc:
+                if a.initial_drc is None and math.isfinite(drc) and 1 <= drc <= tone.max_gain:
                     tone.gain = drc   # the display luma otherwise ramps from DRC 1.5 every session
                 bank.gain_index = bank.tone_index = None   # fresh selection, no dwell against the default seed
                 a.programs,_ = bank.select(initial_controls['AnalogueGain'], tone.gain)   # seed with the restored programs
@@ -610,7 +631,7 @@ def main():
                   published_total=0, retain_frames=a.retain_frames, completed=False, adaptive=bool(adaptive),
                   centre_priority=a.centre_priority, history='continuous', pipeline='prepare/firmware/readback overlapped',
                   reseed_on_program_switch=a.reseed_on_program_switch, slow_frame=a.slow_frame, sensor_digital_max=a.sensor_digital_max,
-                  warm_start=warm_start, bank_gain=a.bank_gain,
+                  warm_start=warm_start, bank_gain=a.bank_gain, denoise_relief_ev=a.denoise_relief_ev, max_drc=a.max_drc, awb_reference_gains=a.awb_reference_gains,
                   colour_sets=str(a.colour_sets.resolve()) if colour else None,
                   raw_target=a.raw_target, luma_target=a.luma_target, slow_frame_gain=a.slow_frame_gain,
                   highlight_peak=a.highlight_peak, peripheral_clipping=a.peripheral_clipping, centre_clipping=a.centre_clipping, centre_percentile=a.centre_percentile,
@@ -763,7 +784,7 @@ def main():
                 ctx = adaptive.context(meta['metadata'])
                 bank_gain = {'analogue': ctx['analogue_gain'], 'total': ctx['gain'],
                              'geometric': ctx['analogue_gain'] * math.sqrt(ctx['digital_gain'])}[a.bank_gain]
-                programs, selection = bank.select(bank_gain, tone.gain)
+                programs, selection = bank.select(adaptive.relieved_gain(bank_gain, a.denoise_relief_ev), tone.gain)
                 overrides = None
                 if colour is not None:
                     cct, distance = locus.cct_from_gains(ctx['wb'])
