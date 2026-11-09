@@ -7,9 +7,19 @@ After=qualcomm-isp-worker.socket
 
 [Service]
 # Capture uses the packaged runtime and the connecting desktop UID.
-# 30 fps until analogue gain is exhausted (knee 16); only then may the frame extend
-# toward 1/15 s, before any sensor digital gain.
-ExecStart=/usr/bin/python3 -I /usr/lib/qualcomm-isp/ipe-workerd.py --sessions /var/lib/qualcomm-isp/sessions --session-args --adaptive --centre-priority --quiet --retain-frames 3000 --slow-frame 2.0 --slow-frame-gain 16
+# Always 30 fps: a frame extended toward 1/15 s made the preview and the
+# automatic framing lag and blurred a moving face. The shadow lift stops at
+# 2x. (The lighter spatial denoise from 16x gain is part of the prepared bank:
+# preparation/temporal_blend.py.)
+# Exposure target and white point are fitted to the Windows Camera preview of
+# the same room (2026-11-09): the earlier targets ran the wall and face about
+# 45 codes brighter, which also cost gain, and the paper white point left
+# neutrals about 9 % too blue.
+# The blue share of a warm light that is kept was refitted with that white
+# point against Windows under a ring light at five warmth settings: the
+# earlier shares (0.47 at 3250 K) left the wall 10-17 % too yellow below
+# 4000 K. Red shares are the earlier ones.
+ExecStart=/usr/bin/python3 -I /usr/lib/qualcomm-isp/ipe-workerd.py --sessions /var/lib/qualcomm-isp/sessions --session-args --adaptive --centre-priority --quiet --retain-frames 3000 --slow-frame 1.0 --slow-frame-gain 16 --max-drc 2.0 --raw-target 90 --luma-target 120 --awb-reference-gains 1.922,1.556 --awb-warmth-table 2300:0.16:0.05,3100:0.126:0.09,3500:0.096:0.22,3950:0.053:0.34,4500:0.0:0.6
 # Camera frames are perishable. The session's capture, preparation and
 # readback threads and the libcamera capture process inherit this priority,
 # so a busy desktop no longer stretches the per-frame copies (seen as 2-4x

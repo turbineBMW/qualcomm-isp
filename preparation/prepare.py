@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from inputs import DLL_SHA256, TUNING_SHA256, REFERENCE_GAINS, ife_profile, reference_gains, load, prepare, require_identity, sha
 from sensor_layout import LAYOUTS
+import temporal_blend
 
 FILES = ('cfg.bin', 'seed-cfg.bin', 'seed-iq.bin', 'seed-striping.bin',
          'iq-ltm.bin', 'striping.bin', 'pre-ltm.bin', 'post.bin', 'ltm-luts.bin',
@@ -152,6 +153,13 @@ def main():
                              oracle_sha256=sha(oracle), dll_sha256=DLL_SHA256,
                              builder_sha256=sha(HERE / 'build-entry.py'))
         write_json(bank / 'bank.json', bank_manifest)
+        if args.sensor == 'imx681':
+            # The entries as built never blend frames; see temporal_blend.py.
+            # The rear bank goes through its own motion and spatial steps.
+            built = work / 'bank-as-built'
+            bank.rename(built)
+            temporal_blend.convert_bank(built, bank, oracle, copied_dll)
+            shutil.rmtree(built)
         spec = importlib.util.spec_from_file_location('adaptive', HERE.parent / 'runtime/ipe-adaptive.py')
         adaptive = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(adaptive)

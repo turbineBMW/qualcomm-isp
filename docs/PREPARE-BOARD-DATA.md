@@ -67,6 +67,9 @@ python -I preparation/prepare.py \
   --output "$HOME/qualcomm-isp-assets" --jobs 2
 ```
 
+For the front sensor the bank is finished by `preparation/temporal_blend.py` (temporal filter on the full pass
+only, lighter spatial programs from 16x gain); the manifest records `temporal_filter` and `spatial_relief_ev`.
+
 Allow several minutes and approximately 1 GiB of free space for temporary work
 and the resulting approximately 258 MiB directory. Progress is printed every
 25 entries. Existing outputs are refused. A failed run can leave an incomplete

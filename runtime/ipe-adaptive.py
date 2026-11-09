@@ -151,6 +151,29 @@ def luma(data, width=3840, height=2160):
     return dict(weighted_mean=float(mean),mean=float(samples.mean()),p99=float(np.percentile(samples,99)))
 
 
+def replace_reference_gains(profile, red, blue):
+    """The IFE profile text with its AWB white point replaced (inline or block YAML list)."""
+    import re
+    profile, replaced = re.subn(r'(?m)^  raw_reference_gains:(?: *\[[^\]\n]*\]|(?:\n  - *[0-9.eE+-]+){2})$',
+                                f'  raw_reference_gains: [{red}, {blue}]', profile, count=1)
+    if replaced != 1:
+        raise ValueError('Profile has no raw_reference_gains to replace')
+    return profile
+
+
+def relieved_gain(gain, relief_ev):
+    """Gain to select denoise programs with: `relief_ev` stops lower from 16x upward.
+
+    Unchanged up to 8x, the relief ramps in over the stop from 8x to 16x.
+    With at most one stop of relief the selection never steps backwards as
+    the gain rises.
+    """
+    if not relief_ev:
+        return gain
+    ev = math.log2(gain)
+    return max(1.0, 2 ** (ev - relief_ev * min(max(ev - 3, 0.0), 1.0)))
+
+
 class Bank:
     def __init__(self, path, dwell=4):
         self.path = Path(path).resolve()
