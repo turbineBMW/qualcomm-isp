@@ -40,6 +40,8 @@ developers can begin source review, platform inventory and staged bring-up.
   retained attribution and excluded data.
 - [Publisher formats and recovery](docs/PUBLISHER.md): desktop resolutions,
   error handling, synthetic tests and the concurrent-client limitation.
+- [Automatic framing](docs/AUTOFRAME.md): the face-following crop for the
+  front camera, its controls, and the NPU and ISP-crop work still open.
 - [Kernel source manifest](packaging/kernel/ISP-SOURCES.json): pinned Omarchy
   recipe and ordered Surface/ISP patch groups.
 
@@ -58,6 +60,9 @@ The ISP work targets Qualcomm X1E hardware and uses the shared Omarchy ARM kerne
 ## Layout
 
 - `runtime/`: capture, processing, leases, publication and worker lifecycle.
+- `autoframe/`: automatic framing for the front camera (`qualcomm-isp-autoframe`,
+  a GStreamer element the publisher loads through `publisher.d`); see
+  [docs/AUTOFRAME.md](docs/AUTOFRAME.md).
 - `profiles/`: explicit board/sensor/firmware configuration.
 - `packaging/`: kernel, private libcamera and runtime Arch recipes.
 - `vendor/`: pinned source manifests, complete dependency diffs and MIT bridge.

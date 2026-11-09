@@ -21,6 +21,21 @@ in the same process, preserving the worker session. Rebuilding replaces the
 PipeWire node, so clients must reconnect. Three rebuilds are allowed in a
 rolling 60-second window; another error exits for systemd recovery.
 
+## Filters (publisher.d)
+
+Runtime `0.1-20` reads `/etc/qualcomm-isp/publisher.d/*.json` at startup and
+inserts each file's `filter` (a gst-launch description) between the frame
+queue and the scaler, in file-name order, for the publishers named in its
+`nodes` list (or all publishers when the list is absent). A file's `formats`
+list replaces the sizes offered to peers, so a filter that outputs 1080p can
+stop the node from offering 4K; the transport pool is sized from the first
+entry. `{config_home}`, `{home}` and `{runtime_dir}` in the description are
+resolved in the publisher's session. The filters run in the queue's streaming
+thread, which RealtimeKit already raises. A file with `"enabled": false` is
+skipped. `qualcomm-isp-autoframe` ([AUTOFRAME.md](AUTOFRAME.md)) is the first
+user: `ispautoframe` on the front node, 1920x1080 first. Unit tests:
+`runtime/test-publisher-filters.py`.
+
 ## Desktop camera routing
 
 Runtime `0.1-12` installs `wireplumber/prefer-isp.lua` and its component config.

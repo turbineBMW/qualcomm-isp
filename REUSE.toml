@@ -49,7 +49,7 @@ SPDX-FileCopyrightText = "The Linux kernel contributors; retained source notices
 SPDX-License-Identifier = "GPL-2.0-only"
 
 [[annotations]]
-path = [".gitignore", "README.md", "docs/**", "profiles/**", "systemd/**", "tools/**", "runtime/**", "packaging/config.json", "packaging/libcamera/PKGBUILD", "packaging/runtime/PKGBUILD", "vendor/*-source.json", "vendor/runtime-origin.json", "packaging/kernel/ISP-SOURCES.json", "packaging/kernel/omarchy-isp-lab.conf"]
+path = [".gitignore", "README.md", "docs/**", "profiles/**", "systemd/**", "tools/**", "runtime/**", "autoframe/**", "packaging/autoframe/**", "packaging/config.json", "packaging/libcamera/PKGBUILD", "packaging/runtime/PKGBUILD", "vendor/*-source.json", "vendor/runtime-origin.json", "packaging/kernel/ISP-SOURCES.json", "packaging/kernel/omarchy-isp-lab.conf"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Brandon Williams <turbine.bmw@gmail.com>"
 SPDX-License-Identifier = "MIT"

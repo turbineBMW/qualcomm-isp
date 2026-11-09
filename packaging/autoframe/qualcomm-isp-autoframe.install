@@ -1,0 +1,32 @@
+# The publisher is a user service; restart it in every logged-in user's
+# session so the drop-in takes effect (the camera reopens for its clients).
+_restart_publishers() {
+	local uid user
+	while read -r uid user _; do
+		[[ -n $user ]] || continue
+		systemctl --user -M "$user@" try-restart qualcomm-isp-publisher.service 2>/dev/null || true
+	done < <(loginctl list-users --no-legend 2>/dev/null)
+}
+
+post_install() {
+	_restart_publishers
+	cat <<'MSG'
+qualcomm-isp-autoframe: the ISP front camera now follows your face.
+  isp-autoframe off | auto         switch, applies to the running camera
+  isp-autoframe --face 0.40        tighter (0.30 default, 0.22 loose)
+  isp-autoframe status             mode and settings in force
+Settings live in ~/.config/qualcomm-isp/autoframe.conf and apply at every login.
+Omarchy bar widget (toggle + sliders), as the desktop user:
+  isp-autoframe plugin install
+If the camera is open right now, restart the publisher yourself:
+  systemctl --user restart qualcomm-isp-publisher.service
+MSG
+}
+
+post_upgrade() {
+	_restart_publishers
+}
+
+post_remove() {
+	_restart_publishers
+}

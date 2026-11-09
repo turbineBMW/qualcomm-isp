@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "isp.autoframe",
+  "name": "Camera framing",
+  "version": "1.0.0",
+  "author": "qualcomm-isp",
+  "description": "Automatic framing of the ISP front camera: follow faces or show the full view, and tune how tight, how high, how fast",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Camera framing",
+    "description": "ISP front camera: automatic framing on/off and its settings",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

@@ -9,7 +9,9 @@ re-triggers starved video drivers; producer progress alone is not display proof.
 
 The node advertises FORMATS (native 4K first). Peers pick one; the bridge
 reports the pick upstream and videoconvertscale produces that size, so a
-1080p-capped client negotiates instead of failing. A peer whose formats do not
+1080p-capped client negotiates instead of failing. Drop-ins under
+/etc/qualcomm-isp/publisher.d (publisher_filters.py) insert GStreamer
+filters between the frame queue and the scaler, and may replace that list. A peer whose formats do not
 intersect ours does not make a proxy error fatal to this publisher. In
 --standby the pipeline is rebuilt in-process should the stream itself error.
 """
@@ -45,6 +47,7 @@ REBUILD_LIMIT, REBUILD_WINDOW = 3, 60
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import isp_config
 from ipe_demand import camera_demand, should_release
+import publisher_filters
 CONFIG, BOARD = isp_config.load()
 PRIVATE_BRIDGE = Path(CONFIG['bridge'])
 
@@ -111,14 +114,16 @@ class Priority:
                       f'{len(self.raised)} in total', flush=True)
 
 
-def configure_transport_pool(sink):
+def configure_transport_pool(sink, native=(W, H)):
     # 1.6.9 exposes its pool through an allocation query and preserves its
     # configured bounds in setcaps/render. Eight 4K RGBA buffers use ~253 MiB;
     # the implicit default of sixteen uses ~506 MiB. Keep headroom for
     # Snapshot's live preview and photo branches. Keep upstream allocation
     # separate so a missing/slow consumer cannot stop the stdin reader.
+    # `native` is the largest size offered (the first format).
+    width, height = native
     caps = Gst.Caps.from_string(
-        f'video/x-raw,format=RGBA,width={W},height={H},framerate={NOMINAL_FPS}/1')
+        f'video/x-raw,format=RGBA,width={width},height={height},framerate={NOMINAL_FPS}/1')
     sink.set_property('use-bufferpool', True)
     try:
         query = Gst.Query.new_allocation(caps, True)
@@ -126,28 +131,32 @@ def configure_transport_pool(sink):
             raise RuntimeError('PipeWire did not expose its transport pool')
         pool, _, _, _ = query.parse_nth_allocation_pool(0)
         config = pool.get_config()
-        Gst.BufferPool.config_set_params(config, caps, W * H * 4, 2, TRANSPORT_BUFFERS)
+        Gst.BufferPool.config_set_params(config, caps, width * height * 4, 2, TRANSPORT_BUFFERS)
         if not pool.set_config(config):
             raise RuntimeError('Could not bound the PipeWire transport pool')
         ok, _, size, minimum, maximum = Gst.BufferPool.config_get_params(pool.get_config())
-        if not ok or (size, minimum, maximum) != (W * H * 4, 2, TRANSPORT_BUFFERS):
+        if not ok or (size, minimum, maximum) != (width * height * 4, 2, TRANSPORT_BUFFERS):
             raise RuntimeError('Unexpected PipeWire pool configuration')
-        print(f'PipeWire transport pool: 2..{TRANSPORT_BUFFERS} native-4K RGBA buffers', flush=True)
+        print(f'PipeWire transport pool: 2..{TRANSPORT_BUFFERS} {width}x{height} RGBA buffers', flush=True)
     finally:
         sink.set_property('use-bufferpool', False)
 
 
-def advertised_formats():
+def advertised_formats(formats=FORMATS):
     return Gst.Caps.from_string('; '.join(
-        f'video/x-raw,format=RGBA,width={w},height={h},framerate={NOMINAL_FPS}/1' for w, h in FORMATS))
+        f'video/x-raw,format=RGBA,width={w},height={h},framerate={NOMINAL_FPS}/1' for w, h in formats))
 
 
-def build_pipeline(node_name):
-    """appsrc -> queue -> videoconvertscale -> RGBA -> pipewiresink, in NULL state.
+def build_pipeline(node_name, filters=None):
+    """appsrc -> queue -> [filters] -> videoconvertscale -> RGBA -> pipewiresink, in NULL state.
 
-    Returns (pipeline, source, queue, sink). The sink advertises FORMATS and,
-    once peers pick one, tells videoconvertscale to produce that size.
+    Returns (pipeline, source, queue, sink). The sink advertises FORMATS (or
+    the filters' list) and, once peers pick one, tells videoconvertscale to
+    produce that size. `filters` is a publisher_filters.Filters: each
+    description becomes a bin between the queue and the scaler.
     """
+    filters = filters or publisher_filters.Filters()
+    formats = filters.formats or FORMATS
     pipeline = Gst.Pipeline.new('sp11-ipe-preview')
     source = Gst.ElementFactory.make('appsrc', 'frames')
     queue = Gst.ElementFactory.make('queue', 'latest')
@@ -182,12 +191,19 @@ def build_pipeline(node_name):
     sink.set_property('mode', 2)
     sink.set_property('sync', False)
     sink.set_property('enable-last-sample', False)
-    sink.set_property('formats', advertised_formats())
-    configure_transport_pool(sink)
-    for item in (source, queue, convert, sink):
+    sink.set_property('formats', advertised_formats(formats))
+    configure_transport_pool(sink, formats[0])
+    stages = [source, queue]
+    for description in filters.descriptions:
+        stage = Gst.parse_bin_from_description(description, True)
+        stage.set_name(f'filter-{len(stages) - 1}')
+        stages.append(stage)
+    stages += [convert, sink]
+    for item in stages:
         pipeline.add(item)
-    if not all((source.link(queue), queue.link(convert), convert.link(sink))):
-        raise RuntimeError('Could not link publisher')
+    for upstream, downstream in zip(stages, stages[1:]):
+        if not upstream.link(downstream):
+            raise RuntimeError(f'Could not link publisher: {upstream.get_name()} -> {downstream.get_name()}')
     return pipeline, source, queue, sink
 
 
@@ -229,6 +245,11 @@ def main():
     if not args.system_pipewire and plugin_path != args.pipewire_plugin.resolve():
         raise RuntimeError(f'Unexpected PipeWire bridge: {plugin_path}')
     print(f'PipeWire bridge: {plugin_path} ({plugin.get_version()})', flush=True)
+    filters = publisher_filters.load(args.node_name)
+    for path, description in zip(filters.files, filters.descriptions):
+        print(f'Publisher filter from {path}: {description}', flush=True)
+    if filters.formats:
+        print('Publisher formats: ' + ', '.join(f'{w}x{h}' for w, h in filters.formats), flush=True)
     if args.check_bridge:
         if shared:
             shared.close()
@@ -289,7 +310,7 @@ def main():
 
     def start_pipeline():
         """Build the pipeline, hook up evidence and errors, start it. Caller holds pipe_lock."""
-        pipeline, source, queue, sink = build_pipeline(args.node_name)
+        pipeline, source, queue, sink = build_pipeline(args.node_name, filters)
         sink.get_static_pad('sink').add_probe(Gst.PadProbeType.BUFFER, sink_probe)
         queue.connect('overrun', lambda q: stats.__setitem__('queue_overruns', stats['queue_overruns'] + 1))
         bus = pipeline.get_bus()

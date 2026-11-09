@@ -17,3 +17,5 @@ packaging/libcamera/libcamera-*.tar.gz
 *.elf
 *.raw
 *.dng
+autoframe/build/
+*.onnx
