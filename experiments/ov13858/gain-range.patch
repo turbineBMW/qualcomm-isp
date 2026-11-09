@@ -1,0 +1,33 @@
+--- a/src/libcamera/pipeline/camss/camss_isp_inline.cpp
++++ b/src/libcamera/pipeline/camss/camss_isp_inline.cpp
+@@ -164,14 +164,14 @@
+ float CamssIspInline::gainFromCode(int32_t code) const
+ {
+ 	if (sensor_->model() == "ov13858")
+-		return std::max(code, 128) / 128.0f;
++		return std::clamp<int32_t>(code, 128, 1984) / 128.0f;
+ 	return 1024.0f / (1024.0f - std::clamp<int32_t>(code, 0, 1023));
+ }
+ 
+ int32_t CamssIspInline::gainToCode(float gain) const
+ {
+ 	if (sensor_->model() == "ov13858")
+-		return std::clamp<int32_t>(std::lround(gain * 128.0f), 128, 8191);
++		return std::clamp<int32_t>(std::lround(gain * 128.0f), 128, 1984);
+ 	if (gain <= 1.0f)
+ 		return 0;
+ 	return std::clamp<int32_t>(std::lround(1024.0f - 1024.0f / gain), 0, 1023);
+@@ -244,6 +244,13 @@
+ 
+ 	exposureMax_ = exposure->second.max().get<int32_t>();
+ 	gainMax_ = gain->second.max().get<int32_t>();
++	/* OV13858 codes above 0x7c0 do not follow the linear gain model on
++	 * Denali: fixed-exposure RAW trials show 16x returning to about 8x.
++	 * Keep automatic exposure, manual controls and metadata in the
++	 * hardware-qualified 1..15.5x range despite the wider V4L2 range.
++	 */
++	if (sensor_->model() == "ov13858")
++		gainMax_ = std::min<int32_t>(gainMax_, 1984);
+ 	vblankMin_ = vblank->second.min().get<int32_t>();
+ 	vblankMax_ = vblank->second.max().get<int32_t>();
+ 	vblankDef_ = vblank->second.def().get<int32_t>();

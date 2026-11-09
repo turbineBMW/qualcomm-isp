@@ -13,6 +13,7 @@ time, and the temporal references still alternate per submission.
 """
 import argparse
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import ctypes
 import importlib.util
@@ -33,6 +34,20 @@ import pd10
 import numpy as np
 
 SLOTS = 2
+# A P010 input is 24 MiB; one pwrite() copies it into the uncached coherent
+# buffer at about 2.4 GB/s on one core. The driver copies each call
+# independently and without a lock, so disjoint ranges of one write are issued
+# concurrently. IPE_WRITE_THREADS=1 restores the single copy for comparison.
+WRITE_THREADS = max(1, min(8, int(os.environ.get('IPE_WRITE_THREADS', '4'))))
+PARALLEL_WRITE_MIN = 4 << 20
+_writers = None
+
+
+def writers():
+    global _writers
+    if _writers is None:
+        _writers = ThreadPoolExecutor(WRITE_THREADS, 'dma-write')
+    return _writers
 
 
 def precision_layout(programs):
@@ -40,7 +55,8 @@ def precision_layout(programs):
 
     P010 keeps denoised colors at ten bits until display output. Its seed writes
     directly into a reference buffer. Serialized submissions share one hardware
-    input; preparation for the other slot retains its expanded input on the CPU.
+    input; preparation for the other slot retains its expanded input on the CPU
+    and submit() copies it in with several concurrent writes.
     """
     p = Path(programs)
     cfg, seed = ((p / name).read_bytes() for name in ('cfg.bin', 'seed-cfg.bin'))
@@ -101,9 +117,19 @@ class Buffer:
         self.fd = os.open(f'{icplab.D}/buf{self.index}', os.O_RDWR | os.O_CLOEXEC)
 
     def write(self, data, offset=0):
-        if offset < 0 or offset + len(data) > self.size:
+        view = memoryview(data).cast('B')
+        if offset < 0 or offset + view.nbytes > self.size:
             raise ValueError('DMA write outside buffer')
-        view = memoryview(data)
+        if view.nbytes < PARALLEL_WRITE_MIN or WRITE_THREADS < 2:
+            return self.write_range(view, offset)
+        step = (view.nbytes + WRITE_THREADS - 1) // WRITE_THREADS
+        step = (step + 4095) & ~4095
+        parts = [(view[start:start + step], offset + start) for start in range(0, view.nbytes, step)]
+        # map() re-raises the first failure once every range has finished.
+        for _ in writers().map(lambda part: self.write_range(*part), parts):
+            pass
+
+    def write_range(self, view, offset):
         while view:
             n = os.pwrite(self.fd, view, offset)
             if n <= 0:
@@ -178,7 +204,8 @@ class Session:
         self.config_count = 0
         self.lock = threading.RLock()
         self.pending_inputs = [None] * SLOTS
-        self.reducer = None
+        self.staging = [None] * SLOTS      # reusable CPU copies of the widened P010 inputs
+        self.reducer = self.widener = None
         if (HERE / 'pd10-fast.so').exists():
             lib = ctypes.CDLL(str(HERE / 'pd10-fast.so'))
             self.reducer = lib.pd10_reduce_planes
@@ -186,6 +213,10 @@ class Session:
                                      ctypes.c_uint, ctypes.c_void_p, ctypes.c_size_t,
                                      ctypes.c_void_p, ctypes.c_size_t]
             self.reducer.restype = ctypes.c_int
+            self.widener = lib.p010_widen_planes
+            self.widener.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint,
+                                     ctypes.c_uint, ctypes.c_void_p, ctypes.c_size_t]
+            self.widener.restype = ctypes.c_int
         try:
             self.inputs = ([self.allocate(self.n * 2)] * SLOTS if self.internal_bytes == 2 else
                            [self.allocate(self.n) for _ in range(SLOTS)])
@@ -356,6 +387,35 @@ class Session:
         view = memoryview(data)
         return self.reduce(view[:self.w * self.h], view[self.w * self.h:], self.h, (factor,))[factor]
 
+    def widen(self, y, uv, valid, slot):
+        """Stage the padded, MSB-aligned P010 input for `slot` in reusable CPU memory.
+
+        The two slots share one hardware input (the second does not fit the
+        dedicated ICP pool next to the references), so the expanded frame
+        waits here until submit() owns the input. The staging buffer of a
+        slot is only rewritten after that slot's submission returned.
+        """
+        staging = self.staging[slot]
+        if staging is None:
+            staging = self.staging[slot] = bytearray(self.n * 2)
+        plane = self.w * self.h
+        if self.widener:
+            ya, ua = (np.frombuffer(v, np.uint8).ctypes.data for v in (y, uv))
+            out = (ctypes.c_uint8 * len(staging)).from_buffer(staging)
+            if self.widener(ya, ua, self.w, valid, self.h, out, len(staging)):
+                raise RuntimeError('P010 widening failed')
+            return staging
+        padded = np.frombuffer(staging, '<u2')
+        yy = padded[:plane].reshape(self.h, self.w)
+        uu = padded[plane:].reshape(self.h // 2, self.w)
+        yy[:valid] = np.frombuffer(y, np.uint8).reshape(valid, self.w)
+        uu[:valid // 2] = np.frombuffer(uv, np.uint8).reshape(valid // 2, self.w)
+        if valid < self.h:
+            yy[valid:] = yy[valid - 1]
+            uu[valid // 2:] = uu[valid // 2 - 1]
+        padded <<= 8
+        return staging
+
     def prepare(self, slot, data=None, planes=None, ds4=None, ds16=None):
         """Write one input slot: the padded frame and its PD10 reductions.
 
@@ -378,7 +438,7 @@ class Session:
             view = memoryview(data)
             y, uv, valid = view[:plane], view[plane:], self.h
             if self.internal_bytes == 2:
-                self.pending_inputs[slot] = expand_nv12(view)
+                self.pending_inputs[slot] = self.widen(y, uv, valid, slot)
             else:
                 self.inputs[slot].write(view)
         else:
@@ -390,16 +450,7 @@ class Session:
             pad = self.h - valid
             target = self.inputs[slot]
             if self.internal_bytes == 2:
-                padded = np.empty(self.n, dtype='<u2')
-                yy = padded[:plane].reshape(self.h, self.w)
-                uu = padded[plane:].reshape(self.h // 2, self.w)
-                yy[:valid] = np.frombuffer(y, np.uint8).reshape(valid, self.w)
-                uu[:valid // 2] = np.frombuffer(uv, np.uint8).reshape(valid // 2, self.w)
-                if pad:
-                    yy[valid:] = yy[valid - 1]
-                    uu[valid // 2:] = uu[valid // 2 - 1]
-                padded <<= 8
-                self.pending_inputs[slot] = padded.tobytes()
+                self.pending_inputs[slot] = self.widen(y, uv, valid, slot)
             else:
                 target.write(y, 0)
                 if pad:
@@ -429,7 +480,8 @@ class Session:
                 if payload is None:
                     raise ValueError('P010 input slot has not been prepared')
                 # The previous IPE_FRAME has returned before this write. The
-                # other preparation thread never touches the shared DMA input.
+                # other preparation thread never touches the shared DMA input;
+                # the staging buffer stays allocated for this slot's next frame.
                 self.inputs[slot].write(payload)
                 self.pending_inputs[slot] = None
             frame = bytearray(self.frames[self.full])

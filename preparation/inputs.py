@@ -68,6 +68,23 @@ def anr_reserve(blob):
     return reserve
 
 
+# IPE ANR register ranges written by IPEANR101Titan680::PackIQRegisterSetting:
+# (register offset, byte offset inside the 0x51c-byte per-pass flow output,
+# register count). Shared by every builder that regenerates ANR programs.
+ANR = ((0x4870, 0, 1), (0x4880, 4, 0x20), (0x4900, 0x84, 1), (0x4940, 0x88, 0xc),
+       (0x4970, 0xb8, 0x16), (0x49d0, 0x110, 0xe), (0x4a28, 0x148, 0x2d),
+       (0x4adc, 0x1fc, 0x7d), (0x4cf0, 0x3f0, 0x4b))
+
+
+def anr_programs(regs, passes=3):
+    """Pack the oracle's per-pass ANR flow registers into IPE write programs."""
+    if len(regs) != passes * 0x51c:
+        raise ValueError('Unexpected ANR register layout')
+    return [b''.join(struct.pack('<II', (3 << 24) | n, off) +
+                     regs[i * 0x51c + start:i * 0x51c + start + 4 * n]
+                     for off, start, n in ANR) for i in range(passes)]
+
+
 def config(width, height, seed=False):
     """API 2.52 image descriptors: full input/reference/display and PD10 pyramids."""
     result = bytearray(5984)

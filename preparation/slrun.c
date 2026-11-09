@@ -773,9 +773,10 @@ int main(int argc, char **argv) {
         typedef int (*calcfn_t)(void *, void *, void *, void *);
         int rc = ((calcfn_t)(g_base + 0x999480))(in, region, reserve, en);
         printf("anr calc rc=%d\n", rc);
-        /* SLRUN_CHROM_SET="off=val,off=val": override NcLib chromatix fields of pass 0 before the flow (lab probes) */
+        /* SLRUN_CHROM_SET="off=val,off=val": override NcLib chromatix fields of any calculated pass before the flow (lab probes, bounded to n passes) */
         if (getenv("SLRUN_CHROM_SET")) { char *spec = strdup(getenv("SLRUN_CHROM_SET")), *tok = strtok(spec, ",");
             while (tok) { char *eq = strchr(tok, '='); if (eq) { *eq = 0; uint32_t off = strtoul(tok, NULL, 0), val = strtoul(eq + 1, NULL, 0);
+                if (off % 4 || off + 4 > 0x954 * n) { fprintf(stderr, "SLRUN_CHROM_SET offset %#x outside the %u-pass ANR chromatix\n", off, n); return 2; }
                 *(uint32_t *)(chrom + off) = val; printf("chromatix[%#x] = %u\n", off, val); } tok = strtok(NULL, ","); } free(spec); }
         *(int32_t *)(ctx + 0x44) = -1; *(int32_t *)(ctx + 0x48) = -1;   /* NCLIB_CONTEXT_ANR: frameNumber, fdConfig(16 words), optical centre x/y = not set */
         typedef int (*flowfn_t)(void *, void *, void *, void *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
@@ -814,9 +815,10 @@ int main(int argc, char **argv) {
         { float one = 1.0f; memcpy(ctx + 0x14, &one, 4); memcpy(in + 0x1c, &one, 4); }   /* upscalingFactorMFSR_ICA = 1 (no MFSR) */
         for (uint32_t p = 0; p < n; p++) { *(uint32_t *)(tf + p * 0x198) = 1; *(uint32_t *)(chrom + p * 0x4e0 + 0x368) = 1; }   /* TF_Chromatix.master_en (IPETF211Titan680::SetTFEnable) */   /* fw moduleCfg.EN per pass (the packer copies TF_Chromatix.en here before the flow; the flow treats 0 as bypass) */
         typedef int (*flowfn_t)(void *, void *, uint32_t, uint32_t, void *, void *, void *, void *);
-        /* SLRUN_CHROM_SET="off=val,off=val": override NcLib chromatix fields of pass 0 before the flow (lab probes) */
+        /* SLRUN_CHROM_SET="off=val,off=val": override NcLib chromatix fields of any calculated pass before the flow (lab probes, bounded to n passes) */
         if (getenv("SLRUN_CHROM_SET")) { char *spec = strdup(getenv("SLRUN_CHROM_SET")), *tok = strtok(spec, ",");
             while (tok) { char *eq = strchr(tok, '='); if (eq) { *eq = 0; uint32_t off = strtoul(tok, NULL, 0), val = strtoul(eq + 1, NULL, 0);
+                if (off % 4 || off + 4 > 0x4e0 * n) { fprintf(stderr, "SLRUN_CHROM_SET offset %#x outside the %u-pass TF chromatix\n", off, n); return 2; }
                 *(uint32_t *)(chrom + off) = val; printf("chromatix[%#x] = %u\n", off, val); } tok = strtok(NULL, ","); } free(spec); }
         if (getenv("SLRUN_TRAP")) raise(SIGTRAP);   /* gdb: stop here with the image mapped, then break on DLL functions */
         rc = ((flowfn_t)(g_base + 0xf4ee90))(chrom, ctx, n, 256, regs, refine, tf, lmc);

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Brandon Williams <turbine.bmw@gmail.com>
 # SPDX-License-Identifier: MIT
-"""Check accelerated native-4K PD10 against the existing NumPy reference."""
+"""Check accelerated native-4K PD10 and P010 widening against NumPy references."""
 import ctypes
 import json
 from pathlib import Path
@@ -35,5 +35,25 @@ for name,data in cases.items():
         assert dst.raw == pd10.encode(y,uv,dw,dh,stride,sh), (name,factor)
         results.append(dict(case=name,factor=factor,byte_identical=True,reduction_ms=elapsed))
 assert fn(src,len(data)-1,w,h,4,dst,len(dst)) == -1
+
+# P010 widening: every code preserved as code << 8, rows padded like the input.
+widen = ctypes.CDLL(str(HERE/'pd10-fast.so')).p010_widen_planes
+widen.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint,
+                  ctypes.c_uint, ctypes.c_void_p, ctypes.c_size_t]
+widen.restype = ctypes.c_int
+for valid in (h, 2160, 2):
+    y = rng.integers(0,256,w*valid,dtype=np.uint8)
+    uv = rng.integers(0,256,w*valid//2,dtype=np.uint8)
+    out = ctypes.create_string_buffer(size*2)
+    start = time.perf_counter()
+    assert widen(y.ctypes.data, uv.ctypes.data, w, valid, h, out, len(out)) == 0
+    elapsed = (time.perf_counter()-start)*1000
+    yy = np.concatenate([y.reshape(valid,w), np.repeat(y[-w:][None], h-valid, 0)])
+    uu = np.concatenate([uv.reshape(valid//2,w), np.repeat(uv[-w:][None], h//2-valid//2, 0)])
+    reference = (np.concatenate([yy.ravel(), uu.ravel()]).astype('<u2') << 8).tobytes()
+    assert out.raw == reference, valid
+    results.append(dict(case=f'widen-valid{valid}', byte_identical=True, widen_ms=elapsed))
+assert widen(y.ctypes.data, uv.ctypes.data, w, 2161, h, out, len(out)) == -1
+assert widen(y.ctypes.data, uv.ctypes.data, w, h, h, out, len(out)-2) == -1
 print(json.dumps(results, indent=2))
-print(f'PASS: {len(results)} byte-identical reductions; invalid input rejected')
+print(f'PASS: {len(results)} byte-identical reductions and widenings; invalid input rejected')
