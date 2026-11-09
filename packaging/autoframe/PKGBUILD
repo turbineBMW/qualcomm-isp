@@ -48,4 +48,5 @@ package() {
   install -Dm644 "$startdir/../../LICENSES/MIT.txt" "$pkgdir/usr/share/licenses/$pkgname/MIT.txt"
   install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 "$a/README.md" "$pkgdir/usr/share/doc/qualcomm-isp/AUTOFRAME-README.md"
+  install -Dm644 "$startdir/../../docs/AUTOFRAME.md" "$pkgdir/usr/share/doc/qualcomm-isp/AUTOFRAME.md"
 }
