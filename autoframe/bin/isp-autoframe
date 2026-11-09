@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Brandon Williams <turbine.bmw@gmail.com>
+# SPDX-License-Identifier: MIT
+#
+# Automatic framing of the ISP front camera (the publisher's ispautoframe
+# element): follow the face(s) like Windows Studio Effects, or show the whole
+# field of view.
+#
+#   isp-autoframe [auto|off|toggle|status] [--face F] [--zoom N] [--headroom H]
+#                 [--speed S] [--hold T] [--group on|off] [--boxes on|off]
+#   isp-autoframe plugin install|remove   the Omarchy bar widget (isp.autoframe)
+#
+#   --face F      face height as a fraction of the frame: 0.30 default
+#                 (head and shoulders), 0.40 tight, 0.22 loose
+#   --zoom N      tightest crop allowed, 1 (never) .. 8; 2 keeps 1080p native
+#   --headroom H  face centre above frame centre, fraction of height (0.12)
+#   --speed S     how fast it moves, rad/s (4 default; 2 lazy, 8 snappy)
+#   --hold T      seconds to hold the shot after you leave (3)
+#   --group on|off  widen to keep everyone in (on) or follow the largest face
+#
+# Writes $XDG_CONFIG_HOME/qualcomm-isp/autoframe.conf. The publisher runs in
+# your session and re-reads that file within a second, so the change applies
+# to the running camera; the same file is the saved configuration, so it is
+# in force again at the next login with nothing to restore. Options not given
+# keep their current value.
+set -euo pipefail
+
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/qualcomm-isp/autoframe.conf"
+plugin_so=/usr/lib/gstreamer-1.0/libgstispautoframe.so
+
+current() {
+	local v
+	v=$(sed -n 's/^mode=\(.*\)$/\1/p' "$conf" 2>/dev/null | tail -n1 || true)
+	[[ $v == off ]] && echo off || echo auto
+}
+
+# key=value settings carried over from the current file
+declare -A kv
+while IFS='=' read -r k v; do [[ -n $k && $k != mode ]] && kv[$k]=$v; done < <(grep '=' "$conf" 2>/dev/null || true)
+
+usage() {
+	echo "usage: isp-autoframe [auto|off|toggle|status] [--face F] [--zoom N] [--headroom H] [--speed S] [--hold T] [--group on|off] [--boxes on|off]" >&2
+	echo "       isp-autoframe plugin install|remove" >&2
+	exit 2
+}
+
+plugin_id=isp.autoframe
+plugin_src=/usr/share/qualcomm-isp/omarchy/plugins/$plugin_id
+plugin_dst="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$plugin_id"
+if [[ ${1:-} == plugin ]]; then
+	case "${2:-}" in
+	install)
+		[[ -d $plugin_src ]] || { echo "isp-autoframe: plugin source missing: $plugin_src" >&2; exit 1; }
+		rm -rf "$plugin_dst" && mkdir -p "$(dirname "$plugin_dst")" && cp -a "$plugin_src" "$plugin_dst"
+		# The shell learns about a new local plugin on a rescan; enable after it.
+		omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+		sleep 1
+		omarchy plugin enable "$plugin_id" || true
+		echo "installed $plugin_dst (bar widget: Camera framing)"
+		;;
+	remove)
+		omarchy plugin disable "$plugin_id" || true
+		rm -rf "$plugin_dst"
+		echo "removed $plugin_dst"
+		;;
+	*) usage ;;
+	esac
+	exit 0
+fi
+
+num() { [[ $1 =~ ^-?[0-9]*\.?[0-9]+$ ]] || usage; echo "$1"; }
+onoff() { case "${1:-}" in on | 1 | true) echo 1 ;; off | 0 | false) echo 0 ;; *) usage ;; esac; }
+
+want=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	auto | off) want=$1 ;;
+	toggle) [[ $(current) == auto ]] && want=off || want=auto ;;
+	status | "")
+		echo "$(current)"
+		for k in "${!kv[@]}"; do echo "$k=${kv[$k]}"; done | sort
+		[[ -f $plugin_so ]] || echo "note: $plugin_so is not installed; the camera does not frame" >&2
+		exit 0
+		;;
+	--face) kv[face-frac]=$(num "${2:-}"); shift ;;
+	--zoom) kv[max-zoom]=$(num "${2:-}"); shift ;;
+	--headroom) kv[headroom]=$(num "${2:-}"); shift ;;
+	--speed) kv[speed]=$(num "${2:-}"); shift ;;
+	--hold) kv[hold-time]=$(num "${2:-}"); shift ;;
+	--group) kv[group]=$(onoff "${2:-}"); shift ;;
+	--boxes) kv[draw-boxes]=$(onoff "${2:-}"); shift ;;
+	*) usage ;;
+	esac
+	shift
+done
+[[ -n $want ]] || want=$(current)
+
+mkdir -p "$(dirname "$conf")"
+{
+	echo "mode=$want"
+	for k in "${!kv[@]}"; do echo "$k=${kv[$k]}"; done | sort
+} >"$conf.tmp.$$"
+mv -f "$conf.tmp.$$" "$conf"
+[[ -f $plugin_so ]] || echo "note: $plugin_so is not installed; saved, but the camera does not frame" >&2
+echo "$want"

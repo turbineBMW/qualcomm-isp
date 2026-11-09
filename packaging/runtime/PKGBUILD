@@ -1,6 +1,6 @@
 pkgname=qualcomm-isp-runtime
 pkgver=0.1
-pkgrel=19
+pkgrel=20
 pkgdesc='Experimental Qualcomm ISP camera runtime with explicit board profiles'
 arch=('aarch64')
 license=('MIT')
@@ -9,7 +9,7 @@ depends=('python' 'python-numpy' 'python-gobject' 'gstreamer' 'gst-plugins-base'
 makedepends=('pkgconf' 'gcc' 'libpipewire')
 backup=('etc/qualcomm-isp/config.json')
 source=('qualcomm-isp-runtime.tar.gz')
-sha256sums=('2f7c0ad727b816944b985e89aa2caffe511197c30131ac2fce8a45b3435d70af')
+sha256sums=('28b2dcb80c03aa3ab130796b3af24c3e457d7fd5be8ff6afdbd597623386b58d')
 options=('!debug')
 build() {
   cd qualcomm-isp
@@ -26,6 +26,7 @@ check() {
   python -I test-ipe-precision.py
   python -I test-sleep.py
   python -I test-ipe-demand.py
+  python -I test-publisher-filters.py
 }
 package() {
   cd qualcomm-isp

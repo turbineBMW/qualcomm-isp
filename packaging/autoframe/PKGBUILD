@@ -1,0 +1,51 @@
+# Maintainer: Brandon Williams <turbine.bmw@gmail.com>
+#
+# Automatic framing for the Qualcomm ISP front camera: a GStreamer element in
+# the camera publisher that follows the face(s) with a YuNet detector (OpenCV
+# DNN on the CPU), like Windows Studio Effects, with a CLI and an Omarchy bar
+# widget to drive it. Installed as a publisher.d drop-in: the publisher runs
+# the element between its 4K frame queue and its scaler and offers 1080p
+# first; removing the package leaves the plain publisher. This reference
+# recipe builds from the checkout (../../autoframe); the published recipe in
+# surface-pro-11-omarchy builds the same tree from a tag. The model comes
+# from OpenCV Zoo at a pinned commit.
+
+pkgname=qualcomm-isp-autoframe
+pkgver=0.1
+pkgrel=1
+pkgdesc='Automatic framing (face-following crop) for the Qualcomm ISP front camera publisher'
+arch=('aarch64')
+url='https://github.com/turbineBMW/qualcomm-isp'
+license=('MIT' 'Apache-2.0')
+depends=('gstreamer' 'gst-plugins-base-libs' 'opencv' 'qualcomm-isp-runtime>=0.1-20')
+makedepends=('meson' 'ninja' 'pkgconf')
+backup=('etc/qualcomm-isp/publisher.d/50-autoframe.json')
+install=qualcomm-isp-autoframe.install
+options=('!debug')
+# YuNet (Apache-2.0), pinned to an OpenCV Zoo commit.
+_zoo=48b10fa505aeb51fbd127fc60a5c660040e823b7
+source=("face_detection_yunet_2023mar-${_zoo:0:7}.onnx::https://github.com/opencv/opencv_zoo/raw/$_zoo/models/face_detection_yunet/face_detection_yunet_2023mar.onnx")
+sha256sums=('8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4')
+
+build() {
+  arch-meson "$startdir/../../autoframe" build
+  meson compile -C build
+}
+
+package() {
+  local a="$startdir/../../autoframe"
+  DESTDIR="$pkgdir" meson install -C build
+  install -Dm644 "$srcdir/face_detection_yunet_2023mar-${_zoo:0:7}.onnx" \
+    "$pkgdir/usr/share/qualcomm-isp/face_detection_yunet_2023mar.onnx"
+  install -Dm755 "$a/bin/isp-autoframe" "$pkgdir/usr/bin/isp-autoframe"
+  install -Dm644 "$a/publisher.d/50-autoframe.json" "$pkgdir/etc/qualcomm-isp/publisher.d/50-autoframe.json"
+  # Omarchy bar widget; `isp-autoframe plugin install` copies it into the
+  # user's plugin directory and enables it.
+  install -Dm644 "$a/omarchy/plugins/isp.autoframe/manifest.json" \
+    "$pkgdir/usr/share/qualcomm-isp/omarchy/plugins/isp.autoframe/manifest.json"
+  install -Dm644 "$a/omarchy/plugins/isp.autoframe/Panel.qml" \
+    "$pkgdir/usr/share/qualcomm-isp/omarchy/plugins/isp.autoframe/Panel.qml"
+  install -Dm644 "$startdir/../../LICENSES/MIT.txt" "$pkgdir/usr/share/licenses/$pkgname/MIT.txt"
+  install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$a/README.md" "$pkgdir/usr/share/doc/qualcomm-isp/AUTOFRAME-README.md"
+}

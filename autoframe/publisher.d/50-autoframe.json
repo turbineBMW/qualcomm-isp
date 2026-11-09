@@ -1,0 +1,6 @@
+{
+  "nodes": ["sp11-ipe-preview"],
+  "filter": "ispautoframe control-file={config_home}/qualcomm-isp/autoframe.conf ! capsfilter caps=video/x-raw,width=1920,height=1080",
+  "formats": [[1920, 1080], [1280, 720], [640, 360]],
+  "enabled": true
+}
