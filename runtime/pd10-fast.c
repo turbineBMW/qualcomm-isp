@@ -1,6 +1,7 @@
 /* SPDX-FileCopyrightText: 2026 Brandon Williams <turbine.bmw@gmail.com> */
 /* SPDX-License-Identifier: MIT */
-/* Native-4K box reduction and measured PD10 packing for the live lab stream.
+/* Native-4K box reduction and measured PD10 packing for the live lab stream,
+ * plus the eight-to-sixteen-bit widening of the P010 input.
  * Same round-to-even 10-bit samples as pd10.py; f is 4 or 16.
  *
  * pd10_reduce_planes() reads the luma and chroma planes separately, so a
@@ -185,6 +186,69 @@ int pd10_reduce_planes(const uint8_t *y, const uint8_t *uv, unsigned w, unsigned
         free(y16); free(u16); free(v16);
     }
     free(ysum); free(usum); free(vsum);
+    return 0;
+}
+
+/* Widen eight-bit NV12 planes into the MSB-aligned P010 input the IPE reads
+ * when the interior runs at ten bits: each code c becomes the little-endian
+ * sixteen-bit value c << 8, so every input code is preserved exactly. Rows at
+ * or beyond h_valid repeat the last valid row, the same 2160 -> 2176 padding
+ * as the reduction above. out holds w * h_total * 3 / 2 two-byte samples.
+ * Row ranges are split across threads; the loop vectorises at -O3.
+ */
+struct widen {
+    const uint8_t *y, *uv;
+    unsigned w, h_valid, h_total;
+    unsigned first, last;           /* rows [first, last): luma rows, then chroma rows */
+    uint16_t *out;
+};
+
+static void widen_rows(struct widen *s)
+{
+    unsigned w = s->w, ch_valid = s->h_valid / 2;
+    for (unsigned r = s->first; r < s->last; r++) {
+        const uint8_t *src;
+        if (r < s->h_total) {
+            unsigned row = r < s->h_valid ? r : s->h_valid - 1;
+            src = s->y + (size_t)row * w;
+        } else {
+            unsigned c = r - s->h_total, row = c < ch_valid ? c : ch_valid - 1;
+            src = s->uv + (size_t)row * w;
+        }
+        uint16_t *dst = s->out + (size_t)r * w;
+        for (unsigned x = 0; x < w; x++)
+            dst[x] = (uint16_t)src[x] << 8;
+    }
+}
+
+static void *widen_worker(void *arg)
+{
+    widen_rows(arg);
+    return NULL;
+}
+
+int p010_widen_planes(const uint8_t *y, const uint8_t *uv, unsigned w, unsigned h_valid,
+                      unsigned h_total, uint16_t *out, size_t out_size)
+{
+    if (!y || !uv || !out || w != 3840 || h_total != 2176 || h_valid < 2 || h_valid > h_total ||
+        (h_valid & 1) || out_size != (size_t)w * h_total * 3 / 2 * sizeof(*out))
+        return -1;
+    unsigned rows = h_total * 3 / 2;
+    int n = threads(), started = 0;
+    struct widen parts[MAX_THREADS];
+    pthread_t ids[MAX_THREADS];
+    unsigned per = (rows + n - 1) / n, first = 0;
+    for (int i = 0; i < n && first < rows; i++) {
+        unsigned last = first + per > rows ? rows : first + per;
+        parts[i] = (struct widen){ y, uv, w, h_valid, h_total, first, last, out };
+        if (last == rows || pthread_create(&ids[started], NULL, widen_worker, &parts[i]))
+            widen_rows(&parts[i]);
+        else
+            started++;
+        first = last;
+    }
+    for (int i = 0; i < started; i++)
+        pthread_join(ids[i], NULL);
     return 0;
 }
 

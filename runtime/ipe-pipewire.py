@@ -29,7 +29,8 @@ import time
 
 import gi
 gi.require_version('Gst', '1.0')
-from gi.repository import GLib, Gst
+gi.require_version('Gio', '2.0')
+from gi.repository import Gio, GLib, Gst
 
 W, H = 3840, 2160
 SIZE = W * H * 3 // 2
@@ -46,6 +47,68 @@ import isp_config
 from ipe_demand import camera_demand, should_release
 CONFIG, BOARD = isp_config.load()
 PRIVATE_BRIDGE = Path(CONFIG['bridge'])
+
+
+class Priority:
+    """Keep this process's frame-path threads ahead of ordinary desktop work.
+
+    A user service cannot lower its own nice level, so the publisher asks
+    RealtimeKit like PipeWire clients do. RealtimeKit raises one thread at a
+    time and marks it reset-on-fork, so threads created later start at nice 0
+    again: sweep() is repeated while a session runs. It serves 25 threads per
+    user, so only the threads that carry frames are raised: appsrc and queue
+    streaming threads, the scaler's task pool and the shared-frame feeder.
+    Refusals are logged and retried a minute later; nothing else depends on it.
+    """
+    NICE = -10
+    LIMIT = 10
+    NAMES = ('frames:src', 'latest:src', 'isp-feed')
+
+    def __init__(self):
+        self.raised = set()
+        self.failed_at = None
+        self.bus = None
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def frame_threads():
+        for tid in os.listdir('/proc/self/task'):
+            try:
+                comm = Path(f'/proc/self/task/{tid}/comm').read_text().strip()
+            except OSError:
+                continue
+            if comm in Priority.NAMES or (comm.startswith('pool-') and comm != 'pool-spawner'):
+                yield int(tid)
+
+    def sweep(self, *extra):
+        """Raise frame threads that appeared since the last call; `extra` are thread ids."""
+        with self.lock:
+            tids = set(self.frame_threads()) | set(extra)
+            self.raised &= tids
+            if self.failed_at is not None and time.monotonic() - self.failed_at < 60:
+                return
+            new = []
+            for tid in sorted(tids - self.raised):
+                if len(self.raised) >= self.LIMIT:
+                    break
+                try:
+                    if self.bus is None:
+                        self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+                    self.bus.call_sync('org.freedesktop.RealtimeKit1', '/org/freedesktop/RealtimeKit1',
+                                       'org.freedesktop.RealtimeKit1', 'MakeThreadHighPriority',
+                                       GLib.Variant('(ti)', (tid, self.NICE)), None,
+                                       Gio.DBusCallFlags.NONE, 5000, None)
+                except GLib.Error as exc:
+                    self.failed_at = time.monotonic()
+                    print(f'PRIORITY {time.monotonic():.3f} RealtimeKit refused nice {self.NICE} for thread {tid}: '
+                          f'{exc.message}; retrying in 60 s', flush=True)
+                    break
+                self.raised.add(tid)
+                new.append(tid)
+            if new:
+                self.failed_at = None
+                print(f'PRIORITY {time.monotonic():.3f} nice {self.NICE} on {len(new)} new frame thread(s), '
+                      f'{len(self.raised)} in total', flush=True)
 
 
 def configure_transport_pool(sink):
@@ -173,6 +236,7 @@ def main():
     origin = time.monotonic_ns()
     loop = GLib.MainLoop()
     failed = []
+    priority = Priority()
     stopping = threading.Event()
     # The live pipeline parts; swapped under pipe_lock by rebuild_pipeline().
     pipe = dict(pipeline=None, source=None, bus=None)
@@ -290,19 +354,22 @@ def main():
 
     def feed(consumer):
         """Copy frames from one shared-frame consumer into the pipeline until EOF."""
-        first = True
+        count = 0
         while not stopping.is_set():
             try:
                 seq, timestamp, frame = consumer.receive()
             except EOFError:
                 return
-            if first:
+            if not count:
                 print(f'STANDBY {time.monotonic():.3f} first frame of this session (sensor {seq}, age {(time.monotonic_ns()-timestamp)/1e6:.0f} ms)', flush=True)
-                first = False
             last_frame[0] = time.monotonic()
             if push(frame, seq, timestamp) != Gst.FlowReturn.OK:
                 raise RuntimeError('Publisher flushed before accepting shared frame')
             consumer.acknowledge()
+            count += 1
+            # The scaler's pool threads exist once a frame has been converted.
+            if count in (1, 2) or count % 300 == 0:
+                priority.sweep(threading.get_native_id())
 
     def reader():
         try:
@@ -402,6 +469,7 @@ def main():
         try:
             push(BLACK, 0, time.monotonic_ns())
             while not stopping.is_set():
+                priority.sweep()
                 count, competing = consumer_demand()
                 if not count:
                     primed = False
@@ -448,7 +516,7 @@ def main():
                     # for an extra ten seconds based on stale pre-start demand.
                     last_seen = time.monotonic()
                     last_frame[0] = time.monotonic() + 10   # start grace
-                    feeder = threading.Thread(target=feed_worker, args=(worker.consumer,), daemon=True)
+                    feeder = threading.Thread(target=feed_worker, args=(worker.consumer,), name='isp-feed', daemon=True)
                     feeder.start()
                 elif (worker is not None and feeder is not None and feeder.is_alive() and last_frame[0]
                       and time.monotonic() - last_frame[0] > STALL_SECONDS and time.monotonic() - last_seen < args.idle_seconds):
@@ -482,6 +550,7 @@ def main():
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, loop.quit)
     with pipe_lock:
         start_pipeline()
+    priority.sweep()
     thread = threading.Thread(target=standby if args.standby else reader, daemon=True)
     thread.start()
     try:

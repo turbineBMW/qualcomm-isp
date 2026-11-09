@@ -1,5 +1,34 @@
 # Initial source publication checks
 
+## Preview latency: input staging and scheduling, runtime 0.1-19 (2026-11-09)
+
+- The rear P010 path shares one hardware input between both slots because a
+  second 24 MiB input does not fit the dedicated ICP pool next to the
+  references, and the lab mapping is read-only. The expanded frame is staged on
+  the CPU and copied in at submission, so the serialized chain per frame was
+  about 10 ms of copying plus 19.5 ms of firmware: the cause of the 26 fps
+  cadence. The copy now uses a native widening routine into reusable staging
+  buffers (0.9 ms versus 3.7 ms in NumPy) and four concurrent writes
+  (`IPE_WRITE_THREADS`), which the driver's lock-free per-call copy permits.
+- Worker services run at `Nice=-10`, inherited by the session threads and the
+  libcamera capture process. The publisher asks RealtimeKit for nice -10 on its
+  frame-carrying threads by name, repeated while a session runs because
+  RealtimeKit marks threads reset-on-fork; the journal confirms the grants.
+- Package checks: 9 PD10/widening byte-identical cases, 9 precision tests with
+  staging reuse and a split-write check, all other suites, and the 14 synthetic
+  publisher checks passed. Installed rear session 125900 (358 outputs, static
+  scene) versus 0.1-18 session 113253: prepare including the submit-side write
+  18.1 -> 8.2 ms (submit-side write 9.5 -> 5.1 ms), firmware 19.4, readback
+  10.1, total 47.7 -> 37.8 ms, output 26.5 -> 28.8 fps (skipped sensor frames
+  12.5% -> 1.4%), sensor-to-publisher age median 59.7 -> 47.8 ms and p95
+  79.1 -> 54.6 ms; publisher sink latency median 72.7 -> 53.8 ms, p95 87.7 ->
+  61.2 ms, queue overruns 15 -> 0. The only frame over 150 ms is the seeded
+  first frame in both. Front timing, colour, exposure and denoising unchanged.
+- Not measured here: a moving scene and a loaded desktop, which the priority
+  change targets. No kernel faults; publishers and WirePlumber active, ICP
+  unloaded after the trial. Growing `camera_icp_mem` for a second input, cheaper
+  program switches, DMA-BUF output and GPU colour conversion remain open.
+
 ## Rear motion rendering, runtime 0.1-16 (2026-11-08)
 
 - A moving hand and charger showed multiple old outlines after IPE processing

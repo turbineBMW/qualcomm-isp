@@ -87,6 +87,23 @@ sensor-timestamp-to-consumer age of 283 ms before this change and 78 ms in a
 separate candidate trial. This measures software delivery, not physical
 screen presentation. Color, exposure and denoising are unchanged.
 
+## Scheduling priority
+
+Runtime 0.1-19 runs the worker services at `Nice=-10`; the session's capture,
+preparation and readback threads and the libcamera capture process inherit
+it. The publisher, a user service, asks RealtimeKit for the same nice level
+on the threads that carry frames (appsrc and queue streaming threads, the
+scaler's task pool and the shared-frame feeder), as PipeWire clients do.
+RealtimeKit marks raised threads reset-on-fork, so the publisher repeats the
+request while a session runs. A refusal is logged as `PRIORITY` and retried a
+minute later; frames still flow at the default priority.
+
+The same release stages the rear camera's ten-bit input with a native widening
+routine and copies it into the shared hardware input with concurrent writes
+(`IPE_WRITE_THREADS`, default 4). Before it, a desktop busy with other work
+made the per-frame CPU copies two to four times slower in bursts while the
+firmware time stayed at 19 ms.
+
 ## One active format per node
 
 Concurrent consumers must accept the same active format. This publisher does

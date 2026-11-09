@@ -4,6 +4,7 @@
 """Precision layout, staging and DMA-address regressions without hardware."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -32,7 +33,7 @@ class PrecisionTests(unittest.TestCase):
         x.w=4;x.h=4;x.n=24;x.internal_bytes=precision;x.failed=False
         x.inputs=[Buffer(0x1000)]*2;x.outputs=[Buffer(0x2000),Buffer(0x3000)]
         x.references=[Buffer(0x4000),Buffer(0x5000)]
-        x.pending_inputs=[None,None];x.pd=Buffer(0x6000)
+        x.pending_inputs=[None,None];x.staging=[None,None];x.widener=None;x.pd=Buffer(0x6000)
         x.pd_sizes={4:8,16:8}
         x.pd_offsets={'input4:0':0,'input4:1':8,'input16:0':16,'input16:1':24,'ref0':32,'ref1':40}
         x.reduce=lambda *args,**kw:{4:bytes(8),16:bytes(8)}
@@ -70,6 +71,39 @@ class PrecisionTests(unittest.TestCase):
         x=self.session();x.references[1].write(bytes(range(48)));x.outputs[0].write(bytes(range(24)))
         self.assertEqual(x.readback({'slot':0,'seed':True,'current':1,'times':{}}),bytes(range(48)))
         self.assertEqual(x.readback({'slot':0,'seed':False,'current':1,'times':{}}),bytes(range(24)))
+
+    def test_staging_buffers_are_reused_per_slot(self):
+        x=self.session();y=bytes(range(8));uv=bytes([121,130,122,131])
+        x.prepare(0,planes=(y,uv));first=x.pending_inputs[0]
+        self.assertIsInstance(first,bytearray);self.assertIs(first,x.staging[0])
+        x.submit(0)
+        x.prepare(0,planes=(bytes([9])*8,bytes([128])*4))
+        self.assertIs(x.pending_inputs[0],first)
+        self.assertEqual(first,s.expand_nv12(bytes([9])*16+bytes([128])*8))
+        self.assertIsNone(x.staging[1])
+
+    def test_widener_receives_planes_and_writable_staging(self):
+        x=self.session();calls=[]
+        def widener(y,uv,w,valid,h,out,size):
+            calls.append((w,valid,h,size));return 0
+        x.widener=widener
+        x.prepare(0,planes=(bytes(8),bytes(4)))
+        self.assertEqual(calls,[(4,2,4,48)])
+        x.widener=lambda *args:-1
+        with self.assertRaisesRegex(RuntimeError,'widening failed'):x.prepare(1,planes=(bytes(8),bytes(4)))
+
+    def test_large_dma_writes_are_split_across_threads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'buf';path.write_bytes(bytes(6<<20))
+            b=s.Buffer.__new__(s.Buffer);b.fd=os.open(path,os.O_RDWR);b.size=6<<20;b.mapping=None
+            try:
+                data=np.random.default_rng(3).integers(0,256,(5<<20)+4097,dtype=np.uint8).tobytes()
+                b.write(data,4096)
+                self.assertEqual(path.read_bytes()[4096:4096+len(data)],data)
+                self.assertEqual(path.read_bytes()[:4096],bytes(4096))
+                with self.assertRaisesRegex(ValueError,'outside buffer'):b.write(data,1<<20)
+            finally:
+                os.close(b.fd)
 
     def test_unprepared_input_is_rejected(self):
         with self.assertRaisesRegex(ValueError,'not been prepared'):self.session().submit(0)
