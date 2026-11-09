@@ -5,14 +5,18 @@ kernel. This repository gives Omarchy
 and X1E developers the kernel patches, private libcamera changes and camera
 runtime used on a Surface Pro 11.
 
-**Qualified hardware: Surface Pro 11 Denali OLED, IMX681 front camera only.**
-This is an initial developer source release. Other X1E machines need their own
-sensor, device-tree, firmware and tuning qualification.
+**Qualified hardware: Surface Pro 11 Denali OLED, IMX681 front camera, and
+the OV13858 rear camera on this machine.** This is a developer source release.
+Other X1E machines need their own sensor, device-tree, firmware and tuning
+qualification.
 
-Rear OV13858 now has [experimental 4K ISP desktop capture](experiments/ov13858/README.md)
-with RAW-driven automatic exposure and white balance. The packages include an
+Rear OV13858 has [4K ISP desktop capture](experiments/ov13858/README.md) with
+RAW-driven automatic exposure and white balance, ten-bit denoising precision,
+spatial denoising at the sensor's physical gain, a temporal-filter bypass that
+removes motion ghosting, colour from the Windows tuning, and a preview path
+measured at a 48 ms median sensor-to-publisher age. The packages include an
 optional rear profile and publisher; front/rear switching has passed on this
-machine. Rear lighting, colour and suspend/resume qualification remain open.
+machine. Broader rear lighting and suspend/resume qualification remain open.
 Runtime `0.1-12` prefers each available ISP publisher in PipeWire camera pickers
 and automatically restores its software libcamera entry when the publisher stops.
 
@@ -67,6 +71,26 @@ or checkout path. Installation does not automatically enable the services.
 
 ## Validation
 
+On 2026-11-09, kernel `7.3.0-25.2-omarchy`, private libcamera `0.7.2-8` and
+runtime `0.1-19` passed on the Surface Pro 11 with the rear camera active:
+
+- Rear preview at 3840x2160: 28.8 fps output from the 30 fps sensor, median
+  sensor-to-publisher age 47.8 ms (p95 54.6 ms), publisher sink latency median
+  53.8 ms with no queue overruns. Startup priming removed a 283 ms consumer
+  offset. Front timing unchanged.
+- Rear image: the P010 interior, motion-safe temporal-filter bypass and spatial
+  denoising at the physical gain, with libcamera's OV13858 gain bounded to the
+  range that still adds signal. A 300-output capture settled at 33,307 us and
+  15.5x gain; front/rear/front/cancelled-rear switching passed.
+- Runtime check phase (nine PD10/widening comparisons, precision, session,
+  handoff, worker, lease, sleep and demand suites), 14 synthetic publisher
+  checks, preparation and colour regressions, and a full spatial bank rebuild
+  that reproduces the installed assets.
+- Worker services at nice -10 and RealtimeKit priority for the publisher's
+  frame threads; no kernel faults, ICP unloaded after every session.
+
+Details and limits for each release are in [docs/RELEASE-CHECKS.md](docs/RELEASE-CHECKS.md).
+
 On 2026-11-07, kernel `7.3.0-25.1-omarchy-isp`, private libcamera `0.7.2-4`
 and runtime `0.1-8` passed on the Surface Pro 11:
 
@@ -107,10 +131,14 @@ unchanged; see the [preparation guide](docs/PREPARE-BOARD-DATA.md).
 
 ## Next integration work
 
-1. Complete rear OV13858 controls, adaptive preparation and desktop integration
-   from the working 4K IFE-to-IPE experiment.
-2. Reduce the kernel changes to the necessary generic and per-board series for
-   integration into the current Omarchy ARM kernel.
+1. Qualify the rear camera more broadly: low light, mixed lighting, and
+   suspend/resume while streaming.
+2. Shorten the preview path further: cheaper exposure program switches,
+   DMA-BUF output to the publisher with GPU colour conversion, and a dedicated
+   P010 input per slot once the ICP memory region can grow.
+3. Reduce the kernel changes to the necessary generic and per-board series for
+   integration into the current Omarchy ARM kernel, and replace the DLL-derived
+   preparation data with a clean-room derivation.
 
 Independent tester work remains open: reproduce preparation on another Surface
 and collect inventory/RAW results from another X1E model. Local development does
