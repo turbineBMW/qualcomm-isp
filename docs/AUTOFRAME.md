@@ -92,9 +92,8 @@ In place (runtime 0.1-20 + package 0.1-1 installed, a headless 1080p
 `pipewiresrc` consumer for 10 s): the worker started, 303 frames reached the
 sink at 30 fps with no queue overruns, publisher sink latency median 63-67 ms
 (p95 76-82 ms) against a 68 ms median for the plain pipeline's last session,
-no pipeline errors. What remains is the visual check by the user in front of
-the camera (Chromium or Snapshot at 1080p): framing look, follow speed, the
-hold when leaving.
+no pipeline errors. The user then tried it live in front of the camera at
+1080p and confirmed the framing follows (2026-11-09).
 
 ## Install and use
 
