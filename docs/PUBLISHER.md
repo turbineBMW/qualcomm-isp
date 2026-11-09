@@ -72,6 +72,21 @@ With both lenses uncovered and other camera apps closed, run
 in one process with clock-synchronised rendering, increasing timestamps and
 non-black frames. Actual Gaze picker checks remain necessary for GUI acceptance.
 
+## Preview startup timing
+
+Before starting an on-demand worker, the publisher sends a black frame with
+a current monotonic timestamp to the linked consumer. The idle black frame
+may have been discarded before that consumer connected. Without a fresh
+startup frame, a GStreamer consumer can establish its pseudo-live timestamp
+offset from the first camera frame, which is delayed by IPE reference seeding.
+That startup delay then persists even after processing reaches steady state.
+Real frames retain their original sensor timestamps and sequence numbers.
+
+On the SP11 rear camera, a clock-synchronised 4K consumer measured a median
+sensor-timestamp-to-consumer age of 283 ms before this change and 78 ms in a
+separate candidate trial. This measures software delivery, not physical
+screen presentation. Color, exposure and denoising are unchanged.
+
 ## One active format per node
 
 Concurrent consumers must accept the same active format. This publisher does

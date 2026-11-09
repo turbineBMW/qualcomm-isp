@@ -397,11 +397,14 @@ def main():
         """Publish black until a consumer links, then run the worker while one is linked."""
         worker = None
         feeder = None
+        primed = False   # a current black frame was sent for the linked consumer(s) since the worker last ran
         last_seen = time.monotonic()
         try:
             push(BLACK, 0, time.monotonic_ns())
             while not stopping.is_set():
                 count, competing = consumer_demand()
+                if not count:
+                    primed = False
                 if count:
                     last_seen = time.monotonic()
                 if feeder is not None and not feeder.is_alive():
@@ -411,11 +414,22 @@ def main():
                         worker.stop()
                         worker = None
                     push(BLACK, 0, time.monotonic_ns())
+                    primed = False   # the restart below sends a fresh frame after the wait
                     if count:
                         print(f'STANDBY {time.monotonic():.3f} session ended with a consumer still linked; retrying in 3 s', flush=True)
                         stopping.wait(3)
                 if count and worker is None:
                     print(f'STANDBY {time.monotonic():.3f} {count} consumer(s) linked: starting worker', flush=True)
+                    # Establish the newly linked consumer's live timeline with
+                    # a current frame. The idle black frame may have been
+                    # discarded while no peer was connected. If the first
+                    # received frame is an old camera frame delayed by IPE
+                    # seeding, GstBaseSrc's pseudo-live timestamp offset keeps
+                    # that startup delay for the entire preview session. Send
+                    # it once per link, not on every busy poll.
+                    if not primed:
+                        push(BLACK, 0, time.monotonic_ns())
+                        primed = True
                     try:
                         worker = Worker()
                     except WorkerBusy:
@@ -428,6 +442,7 @@ def main():
                         stopping.wait(5)
                         continue
                     print(f'STANDBY {time.monotonic():.3f} worker session {worker.session}', flush=True)
+                    primed = False
                     # Startup may finish after the user switches away. Recheck
                     # the graph on the next poll; do not hold the shared lock
                     # for an extra ten seconds based on stale pre-start demand.
