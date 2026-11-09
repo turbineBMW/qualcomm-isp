@@ -574,7 +574,10 @@ def main():
             saved = json.loads(a.state_file.read_text())
             age_h = (time.time() - saved['saved_at']) / 3600
             exposure, gain, wb = int(saved['ExposureTime']), float(saved['AnalogueGain']), [float(x) for x in saved['ColourGains']]
-            if age_h < 24 and 200 <= exposure <= 67000 and 1 <= gain <= BOARD.get('max_analogue_gain', 16.0) and all(0.25 <= x <= 4 for x in wb):
+            # A state saved under a wider earlier gain range is still a valid
+            # starting point: limit_start_exposure() clamps it to this board's
+            # maximum instead of discarding exposure and white balance too.
+            if age_h < 24 and 200 <= exposure <= 67000 and 1 <= gain <= 64 and all(0.25 <= x <= 4 for x in wb):
                 exposure, gain = limit_start_exposure(exposure, gain, a.slow_frame)
                 initial_controls.update(ExposureTime=exposure, AnalogueGain=gain, ColourGains=wb)
                 warm_start = dict(saved, age_hours=age_h)

@@ -27,6 +27,6 @@
       1.462890625
     ]
   },
-  "max_analogue_gain": 63.9921875,
+  "max_analogue_gain": 15.5,
   "capture_runtime": "/run/qualcomm-isp/rear-capture"
 }

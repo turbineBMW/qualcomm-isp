@@ -70,6 +70,14 @@
         "src/libcamera/pipeline/camss/camss_isp_inline.h": "1963aef461b0a1cebd7051b0183ee3ccd762494731e8b2608f9cec8bd7d3d250",
         "src/libcamera/pipeline/camss/camss_isp_inline.cpp": "14807609313d99f92bf7d40a065de7d8fbf2919b68d7ab56ed4588792316c4e3"
       }
+    },
+    {
+      "path": "experiments/ov13858/gain-range.patch",
+      "sha256": "0f873dd5ce3ee7fd5f3414f19d9b98e4e9be4eacf3438f5ed8292deb8c19449b",
+      "description": "Restrict OV13858 linear analogue gain to the measured monotonic 1..15.5x range for automatic/manual controls and metadata",
+      "modified_files": {
+        "src/libcamera/pipeline/camss/camss_isp_inline.cpp": "85af8473a13427c40cbddac35e67aa8de26eccb15e5b1f8856e2df8136eb36de"
+      }
     }
   ]
 }

@@ -120,3 +120,9 @@ precedence = "override"
 SPDX-FileCopyrightText = "The Linux kernel contributors; see retained per-file notices and patch author headers"
 SPDX-License-Identifier = "(GPL-2.0-only) AND (GPL-2.0-only WITH Linux-syscall-note)"
 SPDX-FileComment = "Kernel patch collection plus the per-file licenses/alternatives and exceptions present in this diff; notices remain unchanged."
+
+[[annotations]]
+path = "experiments/ov13858/gain-range.patch"
+precedence = "override"
+SPDX-FileCopyrightText = ["2026 Brandon Williams <turbine.bmw@gmail.com>", "The libcamera contributors; retained source notices apply"]
+SPDX-License-Identifier = "LGPL-2.1-or-later"

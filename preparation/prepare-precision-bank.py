@@ -9,7 +9,6 @@ No hardware or installation access. Generated assets must remain local.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import hashlib
 import importlib.util
 import json
 import os
@@ -23,16 +22,11 @@ import sys
 HERE=Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE))
 sys.path.insert(0,str(HERE.parent/'runtime'))
-from inputs import DLL_SHA256, anr_reserve, descriptor, load, require_identity
+from inputs import DLL_SHA256, anr_programs, anr_reserve, descriptor, load, require_identity, sha
 from chromatix import Chromatix
 from sensor_layout import LAYOUTS
 spec=importlib.util.spec_from_file_location('adaptive',HERE.parent/'runtime/ipe-adaptive.py')
 adaptive=importlib.util.module_from_spec(spec);spec.loader.exec_module(adaptive)
-ANR=((0x4870,0,1),(0x4880,4,0x20),(0x4900,0x84,1),(0x4940,0x88,0xc),
-     (0x4970,0xb8,0x16),(0x49d0,0x110,0xe),(0x4a28,0x148,0x2d),
-     (0x4adc,0x1fc,0x7d),(0x4cf0,0x3f0,0x4b))
-
-def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
@@ -75,10 +69,7 @@ def main():
         else:run(d/'interpolate.log','interp','anr',d/'left.bin',d/'right.bin',t,d/'region.bin')
         log=run(d/'anr.log','anr',d/'region.bin',build/'reserve.bin',3,3840,2176,10,d/'regs.bin',d/'fw.bin',d/'chrom.bin')
         if 'anr calc rc=1' not in log or 'anr flow rc=0' not in log:raise ValueError('ANR calculation failed')
-        regs=(d/'regs.bin').read_bytes();programs=[]
-        for i in range(3):
-            programs.append(b''.join(struct.pack('<II',(3<<24)|n,off)+regs[i*0x51c+start:i*0x51c+start+n*4] for off,start,n in ANR))
-        gains.append((programs,(d/'fw.bin').read_bytes()))
+        gains.append((anr_programs((d/'regs.bin').read_bytes()),(d/'fw.bin').read_bytes()))
     def entry(old):
         e=json.loads(json.dumps(old));d=bank/e['id'];d.mkdir();src=a.assets/'bank'/e['id']
         for f in e['files']:shutil.copyfile(src/f,d/f)

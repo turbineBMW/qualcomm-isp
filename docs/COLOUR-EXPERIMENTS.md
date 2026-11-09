@@ -146,3 +146,46 @@ automatic trial settled at 33,307 microseconds and maximum reported analogue
 gain in warm indoor lighting. The shorter exposure trades low-light signal for
 less motion blur. It cannot freeze fast movement or compensate for arbitrarily
 dim lighting. Front capture policy is unchanged.
+
+## Rear gain and spatial noise candidate (2026-11-09)
+
+With fixed 33,307 microsecond exposure, digital gain 1 and fixed white balance,
+RAW green signal above black followed requested analogue gains 1, 2, 4, 6, 8,
+12 and 15.5 approximately linearly. Requests 16 and 32 instead matched 8;
+24 matched 12; 63.992 matched 15.5. Repeated 8x measurements were stable.
+The existing linear code/128 model is therefore only qualified through 15.5x
+on this unit. This does not decode the upper register range or repair the
+kernel sensor driver's advertised range.
+
+`experiments/ov13858/gain-range.patch` bounds OV13858 automatic exposure,
+manual conversion and reported gain to codes 128..1984 (1..15.5x). Front gain
+conversion is unchanged. The rear profile uses the same bound. Private
+libcamera 0.7.2-8 built successfully; a 300-output automatic rear trial stayed
+inside the bound with clean teardown. The package uses a private prefix.
+Correct gain reporting changes ANR/ASF selection, so a gain cap alone is not
+claimed to reduce visible noise.
+
+The candidate `preparation/prepare-spatial-noise-bank.py` accepts `--assets`
+for the qualified P010 early-color TF-disabled bank, exact rear `--tuning`,
+pinned `--dll`, `--oracle`, and a new private `--output`. It first reproduces
+the source ANR and IQ patches for all 625 entries. It then selects ANR at
+physical gain, replacing the half-gain selection inherited from the front
+camera. Chroma edge-detection Y/U/V thresholds increase smoothly from 1x at
+2x sensor gain to 2x at 8x; luma filter thresholds are unchanged. TF remains
+disabled. Color, tone, sharpening and exposure policy are preserved. Both
+striping programs and manifest hashes are regenerated and scratch checked.
+
+On six saved steady-scene inputs at the old fixed processing entry, doubling
+only the chroma filter thresholds reduced temporal chroma noise about 18–29%
+in two plain regions while preserving text detail. Doubling luma thresholds
+also softened printed text and was rejected. Those percentages isolate the
+chroma adjustment; they do not measure the complete corrected-gain candidate.
+At corrected gain, full-gain ANR plus doubled chroma thresholds preserved
+readable text in the saved-frame comparison. The generated g16-t17 entry
+matches that replayed candidate except the four documented process-pointer
+fields in striping. All 625 entries pass manifest and scratch validation.
+
+The complete candidate passed a 300-output live capture with clean teardown.
+A separate saved-frame sharpening comparison (.75/.5/0) showed little benefit
+from lowering strength, so .75 is retained. Deployment still requires switching
+and latency checks and user review; this is not a claim that grain is solved.

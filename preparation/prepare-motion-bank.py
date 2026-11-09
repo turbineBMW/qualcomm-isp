@@ -8,7 +8,6 @@ or installation access; generated proprietary assets must remain local.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,14 +19,10 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from inputs import DLL_SHA256, load, require_identity
+from inputs import DLL_SHA256, load, require_identity, sha
 from sensor_layout import LAYOUTS
 
 adaptive = load('../runtime/ipe-adaptive')
-
-
-def sha(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def main():
