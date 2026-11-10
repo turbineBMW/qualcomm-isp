@@ -111,11 +111,18 @@ class WorkerdTests(unittest.TestCase):
         parsed = type('A', (), {})(); parsed.socket = self.sock; parsed.sessions = self.temp.name; parsed.owner = None; parsed.group = None
         parsed.max_seconds = 0; parsed.start_timeout = 5; parsed.session_args = []; parsed.idle_exit = 1.2
         began = time.monotonic()
+        # The stopped server leaves its socket file behind; connecting to it
+        # before the new server has bound and listens is refused.
+        self.sock.unlink(missing_ok=True)
         self.thread = threading.Thread(target=d.serve_forever, args=(parsed, self.stopping), daemon=True); self.thread.start()
         for _ in range(50):
-            if self.sock.exists(): break
-            time.sleep(.05)
-        c = self.client(); c.close()   # a client resets the idle period
+            try:
+                c = self.client(); break
+            except (FileNotFoundError, ConnectionRefusedError):
+                time.sleep(.05)
+        else:
+            self.fail('the restarted server never listened')
+        c.close()   # a client resets the idle period
         visited = time.monotonic()
         self.thread.join(5)
         self.assertFalse(self.thread.is_alive())
@@ -162,8 +169,12 @@ def gone(pid):
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
-    # A killed child of the test runner may linger as a zombie until reaped.
-    return Path(f'/proc/{pid}/stat').read_text().split(')')[-1].split()[0] == 'Z'
+    # A killed child of the test runner may linger as a zombie until reaped,
+    # and it may be reaped between the signal check and this read.
+    try:
+        return Path(f'/proc/{pid}/stat').read_text().split(')')[-1].split()[0] == 'Z'
+    except OSError:
+        return True
 
 
 class StopPathTests(unittest.TestCase):
