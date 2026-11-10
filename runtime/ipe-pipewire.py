@@ -46,7 +46,7 @@ FORMATS = [(3840, 2160), (1920, 1080), (1280, 720), (640, 360)]
 REBUILD_LIMIT, REBUILD_WINDOW = 3, 60
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import isp_config
-from ipe_demand import camera_demand, should_release
+from ipe_demand import GraphMonitor, camera_demand, should_release
 import publisher_filters
 CONFIG, BOARD = isp_config.load()
 PRIVATE_BRIDGE = Path(CONFIG['bridge'])
@@ -417,13 +417,21 @@ def main():
     last_frame = [0.0]
     STALL_SECONDS = 8
 
+    # Standby follows the graph through one monitor process and sleeps until
+    # a node or link changes. Polling a full dump every second kept each idle
+    # publisher, PipeWire and WirePlumber busy for nothing.
+    graph = GraphMonitor() if args.standby else None
+    IDLE_HEARTBEAT = 60
+
     def consumer_demand():
         """Our linked clients and demand for the other exclusive ISP route."""
-        try:
-            objects = json.loads(subprocess.check_output(['pw-dump'], timeout=10))
-        except (subprocess.SubprocessError, ValueError) as exc:
-            print(f'STANDBY {time.monotonic():.3f} pw-dump failed: {exc}', flush=True)
-            return None, False
+        objects = graph.snapshot()
+        if objects is None:
+            try:
+                objects = json.loads(subprocess.check_output(['pw-dump'], timeout=10))
+            except (subprocess.SubprocessError, ValueError) as exc:
+                print(f'STANDBY {time.monotonic():.3f} pw-dump failed: {exc}', flush=True)
+                return None, False
         return camera_demand(objects, args.node_name)
 
     class WorkerBusy(RuntimeError):
@@ -491,6 +499,8 @@ def main():
             push(BLACK, 0, time.monotonic_ns())
             while not stopping.is_set():
                 priority.sweep()
+                # Clear before reading: a change after this read wakes the wait below.
+                graph.changed.clear()
                 count, competing = consumer_demand()
                 if not count:
                     primed = False
@@ -558,7 +568,11 @@ def main():
                         feeder.join(30)
                         feeder = None
                     push(BLACK, 0, time.monotonic_ns())
-                stopping.wait(args.poll_seconds)
+                if worker is None and feeder is None and count == 0 and graph.snapshot() is not None:
+                    # Nothing runs and nobody is linked: sleep until the graph changes.
+                    graph.changed.wait(IDLE_HEARTBEAT)
+                else:
+                    stopping.wait(args.poll_seconds)
         except BaseException as exc:
             if not stopping.is_set():
                 failed.append(repr(exc))
@@ -572,6 +586,8 @@ def main():
     with pipe_lock:
         start_pipeline()
     priority.sweep()
+    if graph is not None:
+        graph.start()
     thread = threading.Thread(target=standby if args.standby else reader, daemon=True)
     thread.start()
     try:
@@ -579,7 +595,9 @@ def main():
     finally:
         stopping.set()
         if args.standby:
+            graph.changed.set()   # wake an idle standby wait
             thread.join(60)
+            graph.stop()
         elif not shared:
             thread.join(3)
             if thread.is_alive():

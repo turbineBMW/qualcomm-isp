@@ -206,6 +206,9 @@ def main():
     p.add_argument('--state-file', type=Path, help='Separate warm-start controls for this camera')
     p.add_argument('--max-seconds', type=int, default=0, help='Hard session limit passed to ipe-live (0 = none)')
     p.add_argument('--start-timeout', type=float, default=60)
+    p.add_argument('--idle-exit', type=float, default=0,
+                   help='Exit after this many seconds without a client (0 = never). '
+                        'For socket activation: systemd starts the daemon again on the next connection')
     p.add_argument('--session-args', nargs=argparse.REMAINDER,
                    default=['--adaptive', '--centre-priority', '--quiet', '--retain-frames', '3000'])
     args = p.parse_args()
@@ -239,14 +242,22 @@ def serve_forever(args, stopping):
         log(f'listening on {args.socket}')
     listener.settimeout(.5)
     state = dict(sessions=0)
+    idle_exit = getattr(args, 'idle_exit', 0)
+    idle_since = time.monotonic()
     while not stopping.is_set():
         try:
             conn, _ = listener.accept()
         except socket.timeout:
+            # A connection that arrives after this stays queued on the
+            # listening socket, which systemd keeps open.
+            if idle_exit and time.monotonic() - idle_since >= idle_exit:
+                log(f'no client for {idle_exit:g} s')
+                break
             continue
         pid, uid, gid = __import__('struct').unpack('3i', conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         log(f'client pid {pid} uid {uid}')
         serve(conn, args, state, stopping)
+        idle_since = time.monotonic()
     listener.close()
     log('exiting')
 
