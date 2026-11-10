@@ -69,7 +69,7 @@ Removing the policy package requires restarting WirePlumber to unload its hooks.
 
 The front and rear publishers share an exclusive CAMSS/ICP lock. Runtime
 `0.1-13` preserves the five-second debounce for same-camera close/reopen, but
-an unused camera releases immediately on the next graph poll when another ISP
+an unused camera releases immediately on the next graph check when another ISP
 publisher has a linked consumer. A failed graph query is unknown demand and
 does not stop capture. The existing owner is never preempted while it still
 has consumers.
@@ -86,6 +86,26 @@ With both lenses uncovered and other camera apps closed, run
 `python tools/test-camera-switching.py` to test switching and cancelled startup
 in one process with clock-synchronised rendering, increasing timestamps and
 non-black frames. Actual Gaze picker checks remain necessary for GUI acceptance.
+
+## Idle cost
+
+Until runtime `0.1-24` each standby publisher ran `pw-dump` once a second to
+look for linked consumers. On the Surface Pro 11 that cost about 2 % of a core
+per publisher, around 310 wake-ups a second each, and matching work in
+PipeWire and WirePlumber, all with the camera unused.
+
+Runtime `0.1-25` keeps one `pw-dump --monitor` process per publisher and
+sleeps until a node or link changes. Other graph changes, such as clients
+coming and going, do not wake the standby loop. While no worker runs and no
+consumer is linked the loop wakes once a minute as a safeguard. While a worker
+runs, or after the monitor process fails, it checks every `--poll-seconds` as
+before; a failed monitor is restarted after five seconds and the publisher
+falls back to single dumps meanwhile.
+
+The privileged worker daemons take `--idle-exit SECONDS`. The packaged units
+pass 30: the daemon leaves 30 seconds after its last client, and systemd
+starts it again through the control socket on the next request. The session
+counter in its replies therefore restarts from zero.
 
 ## Preview startup timing
 

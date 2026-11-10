@@ -10,7 +10,7 @@ Environment=QUALCOMM_ISP_CONFIG=/etc/qualcomm-isp/rear.json
 # Capture uses the packaged runtime and the connecting desktop UID.
 # Keep the nominal 30 fps frame period: extending to 1/15 s worsens motion blur.
 # Low light can require higher gain and retain more noise at this shutter limit.
-ExecStart=/usr/bin/python3 -I /usr/lib/qualcomm-isp/ipe-workerd.py --sessions /var/lib/qualcomm-isp/rear-sessions --state-file /var/lib/qualcomm-isp/rear-last-controls.json --session-args --adaptive --centre-priority --quiet --retain-frames 3000 --slow-frame 1.0 --slow-frame-gain 16 --sensor-digital-max 1 --awb-warmth-table "" --awb-warmth 0 --awb-warmth-blue 0
+ExecStart=/usr/bin/python3 -I /usr/lib/qualcomm-isp/ipe-workerd.py --idle-exit 30 --sessions /var/lib/qualcomm-isp/rear-sessions --state-file /var/lib/qualcomm-isp/rear-last-controls.json --session-args --adaptive --centre-priority --quiet --retain-frames 3000 --slow-frame 1.0 --slow-frame-gain 16 --sensor-digital-max 1 --awb-warmth-table "" --awb-warmth 0 --awb-warmth-blue 0
 # Camera frames are perishable. The session's capture, preparation and
 # readback threads and the libcamera capture process inherit this priority,
 # so a busy desktop no longer stretches the per-frame copies (seen as 2-4x

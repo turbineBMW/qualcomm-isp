@@ -105,6 +105,23 @@ class WorkerdTests(unittest.TestCase):
         self.assertIsNotNone(FakeSession.instances[-1].stopped)
         self.assertEqual(c.recv(65536), b''); c.close(); keep.close()
 
+    def test_idle_exit_leaves_the_socket_to_the_service_manager(self):
+        self.stopping.set(); self.thread.join(3)
+        self.stopping.clear()
+        parsed = type('A', (), {})(); parsed.socket = self.sock; parsed.sessions = self.temp.name; parsed.owner = None; parsed.group = None
+        parsed.max_seconds = 0; parsed.start_timeout = 5; parsed.session_args = []; parsed.idle_exit = 1.2
+        began = time.monotonic()
+        self.thread = threading.Thread(target=d.serve_forever, args=(parsed, self.stopping), daemon=True); self.thread.start()
+        for _ in range(50):
+            if self.sock.exists(): break
+            time.sleep(.05)
+        c = self.client(); c.close()   # a client resets the idle period
+        visited = time.monotonic()
+        self.thread.join(5)
+        self.assertFalse(self.thread.is_alive())
+        self.assertGreaterEqual(time.monotonic() - visited, 1.0)
+        self.assertLess(time.monotonic() - began, 5)
+
     def test_shutdown_during_startup(self):
         entered = threading.Event()
         def waiting(session, timeout, stopping=None):
